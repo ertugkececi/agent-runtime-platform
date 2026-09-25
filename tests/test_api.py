@@ -710,6 +710,7 @@ def test_codex_provider_uses_existing_login_without_api_key_and_bounded_handoff(
         "instructions": "Answer in Turkish.",
         "model_provider": "codex",
         "model_name": "gpt-6-sol",
+        "model_reasoning_effort": "high",
     }
     history = [{"role": "user", "content": "Research this."}]
 
@@ -725,6 +726,7 @@ def test_codex_provider_uses_existing_login_without_api_key_and_bounded_handoff(
     assert calls[0]["model"] == "gpt-6-sol"
     assert calls[0]["sandbox"] == openai_codex.Sandbox.read_only
     assert calls[0]["approval_mode"] == openai_codex.ApprovalMode.deny_all
+    assert calls[0]["config"]["model_reasoning_effort"] == "high"
     assert calls[0]["config"]["features"]["shell_tool"] is False
     assert calls[0]["config"]["features"]["unified_exec"] is False
     assert calls[0]["config"]["web_search"] == "disabled"

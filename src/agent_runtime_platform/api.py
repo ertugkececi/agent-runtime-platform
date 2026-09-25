@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
 
 from agent_runtime_platform.database import Database
-from agent_runtime_platform.providers import ProviderRegistry
+from agent_runtime_platform.providers import ProviderRegistry, list_codex_models
 from agent_runtime_platform.runtime import (
     AgentDisabledError,
     AgentAmbiguousError,
@@ -52,6 +52,13 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/codex/models")
+    def codex_models() -> list[dict]:
+        try:
+            return list_codex_models()
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Codex model list is unavailable.") from exc
 
     @app.post("/agents", status_code=status.HTTP_201_CREATED)
     def create_agent(request: AgentCreate) -> dict:

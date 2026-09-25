@@ -168,7 +168,7 @@ API belgeleri `http://127.0.0.1:8000/docs` adresinde açılır. Kontrolleri çal
 uv run pytest
 ```
 
-Tarayıcı sohbetini `http://127.0.0.1:8000/` adresinden açın. İlk ajanı oluşturmak için soldaki formda Codex model kimliğini (örneğin `gpt-6-sol`) ve talimatları girin; ardından ajanla mesajlaşabilirsiniz. Sohbet geçmişi veritabanında tutulur ve sayfa yenilendiğinde yüklenir.
+Tarayıcı sohbetini `http://127.0.0.1:8000/` adresinden açın. İlk ajanı oluşturmak için soldaki formdan Codex modelini, o modelin desteklediği düşünme eforunu ve talimatları seçin; ardından ajanla mesajlaşabilirsiniz. Model ve efor seçenekleri sunucudaki Codex SDK kataloğundan alınır. Sohbet geçmişi veritabanında tutulur ve sayfa yenilendiğinde yüklenir.
 
 PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `postgresql+psycopg://user:password@localhost:5432/agent_runtime` olarak ayarlayın.
 
@@ -199,7 +199,7 @@ sudo tailscale serve status
 
 ### API akışı
 
-1. `POST /agents` ile iki ajan oluşturun. Her biri için `name`, `instructions`, `model_provider` (varsayılan `codex`) ve `model_name` gerekir. `capabilities` isteğe bağlıdır; örneğin `{"capabilities": ["backend", "api"]}`.
+1. `POST /agents` ile iki ajan oluşturun. Her biri için `name`, `instructions`, `model_provider` (varsayılan `codex`) ve `model_name` gerekir. Codex için `GET /codex/models` model ve desteklenen eforları listeler; `model_reasoning_effort` (örneğin `high`) isteğe bağlıdır ve verilmezse modelin varsayılanı kullanılır. `capabilities` isteğe bağlıdır; örneğin `{"capabilities": ["backend", "api"]}`.
 2. `POST /conversations` ile `agent_ids` listesini gönderin.
 3. `GET /agents?capability=backend` ile bu yeteneğe sahip etkin ajanları arayın. Eşleşme tamdır; yetenekler kaydedilirken ve aranırken boşluklardan arındırılıp küçük harfe dönüştürülür.
 4. `POST /conversations/{conversation_id}/messages` isteğinde `sender_agent_id`, `content` ve alıcılardan yalnızca birini gönderin: `recipient_agent_id` veya `recipient_capability`. Yetenek eşleşmesi tek bir etkin ajan bulursa o ajan konuşmaya otomatik eklenir. Hiç eşleşme yoksa `404`, birden fazla eşleşme varsa `409` döner. Kimlikle gönderimde iki ajan da önceden konuşma üyesi olmalıdır.
