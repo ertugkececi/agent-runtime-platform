@@ -171,12 +171,13 @@ PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `pos
 
 ### API akışı
 
-1. `POST /agents` ile iki ajan oluşturun. Her biri için `name`, `instructions`, `model_provider` (`openai`) ve `model_name` gerekir.
+1. `POST /agents` ile iki ajan oluşturun. Her biri için `name`, `instructions`, `model_provider` (`openai`) ve `model_name` gerekir. `capabilities` isteğe bağlıdır; örneğin `{"capabilities": ["backend", "api"]}`.
 2. `POST /conversations` ile `agent_ids` listesini gönderin.
-3. `POST /conversations/{conversation_id}/messages` ile `sender_agent_id`, `recipient_agent_id` ve `content` gönderin.
-4. Yanıttaki çalıştırma kimliğiyle `GET /runs/{run_id}` üzerinden mesajları, durum bilgisini ve olay izini okuyun. Konuşmanın tamamı `GET /conversations/{conversation_id}` üzerinden alınabilir.
+3. `GET /agents?capability=backend` ile bu yeteneğe sahip etkin ajanları arayın. Eşleşme tamdır; yetenekler kaydedilirken ve aranırken boşluklardan arındırılıp küçük harfe dönüştürülür.
+4. `POST /conversations/{conversation_id}/messages` isteğinde `sender_agent_id`, `content` ve alıcılardan yalnızca birini gönderin: `recipient_agent_id` veya `recipient_capability`. Yetenek eşleşmesi tek bir etkin ajan bulursa o ajan konuşmaya otomatik eklenir. Hiç eşleşme yoksa `404`, birden fazla eşleşme varsa `409` döner. Kimlikle gönderimde iki ajan da önceden konuşma üyesi olmalıdır.
+5. Yanıttaki çalıştırma kimliğiyle `GET /runs/{run_id}` üzerinden mesajları, durum bilgisini ve olay izini okuyun. Konuşmanın tamamı `GET /conversations/{conversation_id}` üzerinden alınabilir.
 
-`PATCH /agents/{agent_id}` ajan ayarlarını değiştirir veya `{"enabled": false}` ile yeni çalıştırmalarda kullanılmasını engeller. Her değişiklik ajan sürümünü artırır. Çalışan her görev, başlangıçta kullandığı talimat/model anlık görüntüsünü saklar; çalıştırma API'si talimat içeriğini döndürmez.
+`PATCH /agents/{agent_id}` ajan ayarlarını, yeteneklerini değiştirir veya `{"enabled": false}` ile yeni çalıştırmalarda kullanılmasını engeller. Her değişiklik ajan sürümünü artırır. Çalışan her görev, başlangıçta kullandığı talimat/model/yetenek anlık görüntüsünü saklar; çalıştırma API'si talimat içeriğini döndürmez.
 
 İstek gövdesi ve hata biçimleri için `/docs` içindeki OpenAPI arayüzünü kullanın. Gerçek model çağrısı OpenAI API kullanımı doğurur; testler bu servise bağlanmaz.
 
@@ -206,4 +207,4 @@ PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `pos
 
 Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olacak. React/Next.js arayüzü sonraki adımda değerlendirilecek. İlk aşamada ayrı mesaj kuyruğu eklenmeyecek.
 
-Mevcut dilim API tabanlıdır. Kullanıcı arayüzü, yetenekle ajan keşfi, grup odaları, kuyrukta çalışan işler, kimlik doğrulama, MCP/A2A ve veritabanı migration yönetimi sonraki işlerin kapsamındadır.
+Mevcut dilimler API tabanlıdır. Kullanıcı arayüzü, grup odaları, kuyrukta çalışan işler, kimlik doğrulama, MCP/A2A ve veritabanı migration yönetimi sonraki işlerin kapsamındadır.

@@ -3,12 +3,14 @@ from __future__ import annotations
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import FastAPI, HTTPException, Query, Response, status
 
 from agent_runtime_platform.database import Database
 from agent_runtime_platform.providers import ProviderRegistry
 from agent_runtime_platform.runtime import (
     AgentDisabledError,
+    AgentAmbiguousError,
+    AgentCapabilityNotFoundError,
     AgentNotFoundError,
     AgentRuntimeService,
     ConversationConflictError,
@@ -46,8 +48,11 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/agents")
-    def list_agents() -> list[dict]:
-        return runtime.list_agents()
+    def list_agents(capability: str | None = Query(default=None, min_length=1, max_length=80)) -> list[dict]:
+        try:
+            return runtime.list_agents(capability)
+        except InvalidMessageError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.patch("/agents/{agent_id}")
     def update_agent(agent_id: str, request: AgentUpdate) -> dict:
@@ -83,12 +88,23 @@ def create_app(
                 conversation_id=conversation_id,
                 sender_agent_id=request.sender_agent_id,
                 recipient_agent_id=request.recipient_agent_id,
+                recipient_capability=request.recipient_capability,
                 content=request.content,
             )
             response.headers["Location"] = f"/runs/{result['id']}"
             return result
         except ConversationNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Conversation not found.") from exc
+        except AgentCapabilityNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="No enabled agent matches the requested capability.",
+            ) from exc
+        except AgentAmbiguousError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Multiple enabled agents match the requested capability.",
+            ) from exc
         except AgentNotFoundError as exc:
             raise HTTPException(status_code=404, detail="An agent was not found.") from exc
         except AgentDisabledError as exc:

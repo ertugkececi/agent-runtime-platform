@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from agent_runtime_platform.database import Database
 from agent_runtime_platform.models import (
     Agent,
+    AgentCapability,
     Conversation,
     ConversationMember,
     Message,
@@ -22,6 +23,14 @@ from agent_runtime_platform.providers import ProviderError, ProviderRegistry
 
 
 class AgentNotFoundError(Exception):
+    pass
+
+
+class AgentCapabilityNotFoundError(Exception):
+    pass
+
+
+class AgentAmbiguousError(Exception):
     pass
 
 
@@ -61,6 +70,7 @@ def _agent_snapshot(agent: Agent) -> dict[str, Any]:
         "instructions": agent.instructions,
         "model_provider": agent.model_provider,
         "model_name": agent.model_name,
+        "capabilities": sorted(item.capability for item in agent.capability_records),
         "version": agent.version,
     }
 
@@ -71,6 +81,7 @@ def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "name": snapshot["name"],
         "model_provider": snapshot["model_provider"],
         "model_name": snapshot["model_name"],
+        "capabilities": snapshot["capabilities"],
         "version": snapshot["version"],
     }
 
@@ -84,6 +95,7 @@ def _agent_payload(agent: Agent) -> dict[str, Any]:
         "model_provider": agent.model_provider,
         "model_name": agent.model_name,
         "enabled": agent.enabled,
+        "capabilities": sorted(item.capability for item in agent.capability_records),
         "version": agent.version,
         "created_at": agent.created_at.isoformat(),
         "updated_at": agent.updated_at.isoformat(),
@@ -136,14 +148,29 @@ class AgentRuntimeService:
         if not self.providers.supports(data["model_provider"]):
             raise InvalidMessageError("The requested model provider is not configured.")
         with self.database.session() as session:
-            agent = Agent(**data)
+            agent_data = dict(data)
+            capabilities = agent_data.pop("capabilities", [])
+            agent = Agent(**agent_data)
+            agent.capability_records = [AgentCapability(capability=value) for value in capabilities]
             session.add(agent)
             session.commit()
             return _agent_payload(agent)
 
-    def list_agents(self) -> list[dict[str, Any]]:
+    def list_agents(self, capability: str | None = None) -> list[dict[str, Any]]:
         with self.database.session() as session:
-            agents = session.scalars(select(Agent).order_by(Agent.created_at, Agent.id)).all()
+            statement = select(Agent)
+            if capability is not None:
+                normalized_capability = capability.strip().casefold()
+                if not normalized_capability:
+                    raise InvalidMessageError("Capability cannot be blank.")
+                statement = (
+                    statement.join(AgentCapability, AgentCapability.agent_id == Agent.id)
+                    .where(
+                        AgentCapability.capability == normalized_capability,
+                        Agent.enabled.is_(True),
+                    )
+                )
+            agents = session.scalars(statement.order_by(Agent.created_at, Agent.id)).all()
             return [_agent_payload(agent) for agent in agents]
 
     def update_agent(self, agent_id: str, changes: dict[str, Any]) -> dict[str, Any]:
@@ -153,9 +180,15 @@ class AgentRuntimeService:
                 raise AgentNotFoundError(agent_id)
             if "model_provider" in changes and not self.providers.supports(changes["model_provider"]):
                 raise InvalidMessageError("The requested model provider is not configured.")
-            if changes:
-                for key, value in changes.items():
+            updated_values = dict(changes)
+            capabilities = updated_values.pop("capabilities", None)
+            if updated_values or capabilities is not None:
+                for key, value in updated_values.items():
                     setattr(agent, key, value)
+                if capabilities is not None:
+                    agent.capability_records = [
+                        AgentCapability(capability=value) for value in capabilities
+                    ]
                 agent.version += 1
                 agent.updated_at = utc_now()
                 session.commit()
@@ -212,9 +245,12 @@ class AgentRuntimeService:
         self,
         conversation_id: str,
         sender_agent_id: str,
-        recipient_agent_id: str,
+        recipient_agent_id: str | None,
+        recipient_capability: str | None,
         content: str,
     ) -> dict[str, Any]:
+        if (recipient_agent_id is None) == (recipient_capability is None):
+            raise InvalidMessageError("Provide exactly one recipient ID or capability.")
         if sender_agent_id == recipient_agent_id:
             raise InvalidMessageError("Sender and recipient must be different agents.")
 
@@ -226,20 +262,38 @@ class AgentRuntimeService:
             if conversation.status != "open":
                 raise ConversationConflictError("The conversation is not open.")
 
-            agents = {
-                agent.id: agent
-                for agent in session.scalars(
-                    select(Agent).where(Agent.id.in_([sender_agent_id, recipient_agent_id]))
-                ).all()
-            }
-            if sender_agent_id not in agents:
+            source = session.get(Agent, sender_agent_id)
+            if source is None:
                 raise AgentNotFoundError(sender_agent_id)
-            if recipient_agent_id not in agents:
-                raise AgentNotFoundError(recipient_agent_id)
-            source = agents[sender_agent_id]
-            target = agents[recipient_agent_id]
-            if not source.enabled or not target.enabled:
+            if not source.enabled:
                 raise AgentDisabledError("Disabled agents cannot send or receive new messages.")
+
+            capability_routed = recipient_agent_id is None
+            if capability_routed:
+                normalized_capability = (recipient_capability or "").strip().casefold()
+                if not normalized_capability:
+                    raise InvalidMessageError("Recipient capability cannot be blank.")
+                candidates = session.scalars(
+                    select(Agent)
+                    .join(AgentCapability, AgentCapability.agent_id == Agent.id)
+                    .where(
+                        AgentCapability.capability == normalized_capability,
+                        Agent.enabled.is_(True),
+                        Agent.id != sender_agent_id,
+                    )
+                    .order_by(Agent.created_at, Agent.id)
+                ).all()
+                if not candidates:
+                    raise AgentCapabilityNotFoundError(normalized_capability)
+                if len(candidates) > 1:
+                    raise AgentAmbiguousError(normalized_capability)
+                target = candidates[0]
+            else:
+                target = session.get(Agent, recipient_agent_id)
+                if target is None:
+                    raise AgentNotFoundError(recipient_agent_id)
+                if not target.enabled:
+                    raise AgentDisabledError("Disabled agents cannot send or receive new messages.")
 
             members = set(
                 session.scalars(
@@ -248,8 +302,13 @@ class AgentRuntimeService:
                     )
                 ).all()
             )
-            if sender_agent_id not in members or recipient_agent_id not in members:
-                raise ConversationConflictError("Both agents must belong to the conversation.")
+            if sender_agent_id not in members:
+                raise ConversationConflictError("The sender must belong to the conversation.")
+            if target.id not in members:
+                if capability_routed:
+                    session.add(ConversationMember(conversation_id=conversation_id, agent_id=target.id))
+                else:
+                    raise ConversationConflictError("Both agents must belong to the conversation.")
 
             run = Run(
                 id=run_id,
@@ -270,7 +329,7 @@ class AgentRuntimeService:
                     conversation_id=conversation_id,
                     sequence=conversation.next_message_sequence,
                     sender_agent_id=sender_agent_id,
-                    recipient_agent_id=recipient_agent_id,
+                    recipient_agent_id=target.id,
                     content=content,
                     kind="agent_message",
                 )
@@ -280,7 +339,11 @@ class AgentRuntimeService:
                 session,
                 run,
                 "message_sent",
-                {"sender_agent_id": sender_agent_id, "recipient_agent_id": recipient_agent_id},
+                {
+                    "sender_agent_id": sender_agent_id,
+                    "recipient_agent_id": target.id,
+                    **({"recipient_capability": recipient_capability} if capability_routed else {}),
+                },
             )
             session.commit()
 
