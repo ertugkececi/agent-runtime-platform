@@ -19,6 +19,9 @@ dependencies = [
     "openai-codex>=0.156,<0.157",
 ]
 
+[project.scripts]
+agent-runtime-login = "agent_runtime_platform.codex_login:main"
+
 [project.optional-dependencies]
 dev = [
     "httpx>=0.27,<1.0",

@@ -162,7 +162,7 @@ class CodexChatProvider:
                     account = codex.account().account
                     if account is None or account.root.type != "chatgpt":
                         raise ProviderError(
-                            "Codex needs a ChatGPT login. Run 'codex login' on the server."
+                            "Codex needs a ChatGPT login. Run 'uv run agent-runtime-login' on the server."
                         )
                     thread = codex.thread_start(
                         model=agent["model_name"],
