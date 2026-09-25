@@ -1,6 +1,6 @@
 # Agent Runtime Platform
 
-> **Durum:** Ajanlar arası mesajlaşma, yeteneğe göre keşif ve yerel insan-ajan sohbeti kullanılabilir.
+> **Durum:** Ajanlar arası mesajlaşma, yeteneğe göre keşif, yerel insan-ajan sohbeti ve sınırlandırılmış tek alt görev devri kullanılabilir.
 
 Agent Runtime Platform, yapay zekâ ajanlarını çalışma anında tanımlayıp yönetmek, yeteneklerine göre bulmak ve birbirleriyle izlenebilir biçimde konuşturmak için tasarlanan bir platformdur. Yeni bir ajan eklemek veya devre dışı bırakmak, her seferinde uygulama kodunu değiştirmeyi gerektirmemelidir.
 
@@ -10,15 +10,15 @@ Bir kullanıcı arayüzünden veya API'den ajan oluştur; modele, talimatlara, y
 
 **Temel ilke:** Ajan tanımı veridir; çalışma zamanı bu tanımı okuyarak ajanı çalıştırır. Ajan kayıtları, görevler, konuşmalar, mesajlar ve çalıştırma kayıtları ayrı kavramlardır.
 
-## İlk sürümde kullanıcı ne yapabilecek?
+## Bugün kullanılabilenler
 
-1. Arayüz veya API üzerinden ajan oluşturacak, düzenleyecek ve devre dışı bırakacak.
-2. Ajan için model sağlayıcısı, model, talimat, yetenek ve izin verilen araçları tanımlayacak.
-3. Ajanlar arasında doğrudan mesaj gönderecek ve bir ajanın başka ajanı yeteneğine göre bulmasını sağlayacak.
-4. Birden fazla ajanın katıldığı bir konuşma odası açacak.
-5. Mesajları, görevleri ve çalıştırma olaylarını zaman çizelgesinde izleyecek.
+- Ajanları API üzerinden oluşturma, düzenleme ve devre dışı bırakma.
+- Ajanlar arasında doğrudan mesajlaşma; alıcıyı kimlikle veya tekil yetenek eşleşmesiyle belirleme.
+- Yerel, tek kullanıcılı tarayıcı arayüzünde etkin bir ajan seçip insan-ajan sohbeti yapma; geçmiş yenileme sonrasında yüklenir.
+- İnsan-ajan sohbetinde bir alt görevi, tam yetenek eşleşmesiyle bulunan tek etkin ajana devretme; bir istekte en fazla bir devir yapılır.
+- Çalıştırma durumlarını, kullanılan ajan yapılandırması anlık görüntülerini ve sıralı olay izlerini API üzerinden görüntüleme.
 
-Bu maddeler **hedeflenen özelliklerdir**; mevcut bir uygulamanın özellik listesi değildir.
+Grup odaları, araç/MCP bağlayıcıları, arka plan işçileri ve çok kullanıcılı erişim henüz uygulanmadı. Planlanan işler “Sonraki aşamalar” bölümünde yer alır.
 
 ## Kavramsal mimari
 
@@ -72,7 +72,7 @@ Yönlendirme, izin ve limit kontrolleri öngörülebilir kurallarla çalışır.
 }
 ```
 
-Bu örnek bir **kavramsal sözleşmedir**; uygulama API'si henüz tanımlanmış değildir. Model kimlikleri ve araç izinleri kuruluma göre doğrulanmalıdır. Anahtarlar ve erişim belirteçleri ajan tanımına düz metin olarak yazılmamalıdır.
+Bu JSON, hedeflenen geniş ajan sözleşmesini gösterir. Uygulama API'si bugün ajan adı, açıklaması, talimatları, model sağlayıcısı ve adı, etkin durumu ve yeteneklerini yönetir; çalıştırmalar kullanılan sürümlü yapılandırmanın anlık görüntüsünü saklar. Araç kimlikleri, iletişim izinleri ve limit alanları henüz API'de uygulanmamıştır. Anahtarlar ve erişim belirteçleri ajan tanımına düz metin olarak yazılmamalıdır.
 
 Bir ajan devre dışı bırakıldığında eski konuşmaların ajan kimliği korunur. Her çalıştırma, kullanılan ajan tanımının sürümünü veya anlık görüntüsünü kaydeder; böylece geçmiş sonuçlar daha sonra açıklanabilir.
 
@@ -88,11 +88,11 @@ Gönderen, sabit bir ajan adı yerine `postgresql` gibi bir yetenek isteyebilir.
 
 ### Devir ve koordinasyon
 
-İleride bir ajan konuşmanın sorumluluğunu başka ajana devredebilir veya bir koordinatör birden çok ajana alt görev atayabilir. Bu akışlarda yetki, görev sahibi ve tamamlanma koşulu kayıtlı olmalıdır.
+İnsan-ajan sohbetinde üst ajan bir sınırlı alt görevi tam yetenek eşleşmesiyle bulunan tek etkin ajana devredebilir. Üst ajan kullanıcıya yanıt verir; üst/alt görev ilişkisi, kullanılan ajan yapılandırması anlık görüntüsü, durum, sonuç ve çalıştırma olayları kaydedilir. Her kullanıcı isteğinde en fazla bir devir yapılır; devredilen ajan yeni bir devir başlatamaz. Birden çok ajana koordinasyon bu dilimde yoktur.
 
 ### Oda / grup konuşması
 
-Bir konuşmaya birden fazla ajan katılabilir. Örneğin mimar, geliştirici ve güvenlik ajanı aynı konuda görüş belirtir. İlk sürümde söz hakkı sırası ve bitiş koşulu çalışma zamanı tarafından belirlenir; kontrolsüz, sonsuz ajan konuşmaları engellenir.
+Bir konuşmaya birden fazla ajan katılabilir. Örneğin mimar, geliştirici ve güvenlik ajanı aynı konuda görüş belirtebilir. Grup odaları henüz uygulanmadı; planlanan çözümde söz hakkı sırası ve bitiş koşulu çalışma zamanı tarafından belirlenecek, kontrolsüz ve sonsuz ajan konuşmaları engellenecek.
 
 Örnek mesaj zarfı:
 
@@ -131,7 +131,7 @@ Gerçek şema, gereksinimler ve ilk uygulama sırasında belirlenecek. Bir ajan�
 
 - Her mesajda gönderen, hedef, konuşma, görev ve izleme kimlikleri taşınır.
 - Ajanların iletişim ve araç kullanımı izinlerle sınırlandırılır; model çıktısı tek başına yetki vermez.
-- Tur, devir, süre ve maliyet limitleri; döngü tespiti ve durdurma mekanizması bulunur.
+- İnsan-ajan sohbetinde devir sayısı en fazla bir olacak şekilde kuralla sınırlandırılır. Tur, süre ve maliyet limitleri ile genel döngü tespiti henüz uygulanmamıştır.
 - Teslimat ve tekrar denemeleri aynı görevin yanlışlıkla iki kez sonuç üretmesini önleyecek biçimde tasarlanır.
 - Hatalar, denemeler ve kararlar olay kayıtlarında izlenir; gizli bilgiler loglara yazılmaz.
 - Çalışma sırasındaki bir ajan değişikliği, başlamış çalıştırmanın sürümünü geriye dönük değiştirmez.
@@ -177,7 +177,7 @@ PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `pos
 2. `POST /conversations` ile `agent_ids` listesini gönderin.
 3. `GET /agents?capability=backend` ile bu yeteneğe sahip etkin ajanları arayın. Eşleşme tamdır; yetenekler kaydedilirken ve aranırken boşluklardan arındırılıp küçük harfe dönüştürülür.
 4. `POST /conversations/{conversation_id}/messages` isteğinde `sender_agent_id`, `content` ve alıcılardan yalnızca birini gönderin: `recipient_agent_id` veya `recipient_capability`. Yetenek eşleşmesi tek bir etkin ajan bulursa o ajan konuşmaya otomatik eklenir. Hiç eşleşme yoksa `404`, birden fazla eşleşme varsa `409` döner. Kimlikle gönderimde iki ajan da önceden konuşma üyesi olmalıdır.
-5. Yanıttaki çalıştırma kimliğiyle `GET /runs/{run_id}` üzerinden mesajları, durum bilgisini ve olay izini okuyun. Konuşmanın tamamı `GET /conversations/{conversation_id}` üzerinden alınabilir.
+5. Yanıttaki çalıştırma kimliğiyle `GET /runs/{run_id}` üzerinden mesajları, görev kayıtlarını, durum bilgisini ve olay izini okuyun. Konuşmanın tamamı `GET /conversations/{conversation_id}` üzerinden alınabilir.
 
 `PATCH /agents/{agent_id}` ajan ayarlarını, yeteneklerini değiştirir veya `{"enabled": false}` ile yeni çalıştırmalarda kullanılmasını engeller. Her değişiklik ajan sürümünü artırır. Çalışan her görev, başlangıçta kullandığı talimat/model/yetenek anlık görüntüsünü saklar; çalıştırma API'si talimat içeriğini döndürmez.
 
@@ -185,29 +185,32 @@ PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `pos
 
 - `POST /chat/conversations` gövdesi `{"agent_id": "..."}` ile tek ajanlı bir sohbet başlatır.
 - `POST /chat/conversations/{conversation_id}/messages` gövdesi `{"content": "..."}` ile kullanıcı mesajını gönderir.
-- `GET /conversations/{conversation_id}` sohbet geçmişini, `GET /runs/{run_id}` son yanıtın çalıştırma izini döndürür.
+- `GET /conversations/{conversation_id}` sohbet geçmişini, `GET /runs/{run_id}` görev durumları ve sonuçları dâhil son yanıtın çalıştırma izini döndürür.
+- Ajan bir sınırlı alt görevi tam yetenek eşleşmesi olan tek etkin ajana devredebilir; her çalıştırmada en fazla bir devir yapılır.
 
 Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama ve çok kullanıcılı erişim bu dilimde yoktur.
 
 İstek gövdesi ve hata biçimleri için `/docs` içindeki OpenAPI arayüzünü kullanın. Gerçek model çağrısı OpenAI API kullanımı doğurur; testler bu servise bağlanmaz.
 
-## MVP kapsamı ve kabul ölçütleri
+## MVP kapsamı ve uygulama durumu
 
-| İşlev | Kabul ölçütü |
+| İşlev | Mevcut durum |
 | --- | --- |
-| Ajan yönetimi | Yeni ajan oluşturulur; düzenlenir; devre dışı bırakılır; geçmiş mesajlar okunabilir kalır. |
-| Model ve araç yapılandırması | Ajanın model ve izin verilen araçları kaydedilir; geçersiz seçimler reddedilir. |
-| Keşif | Etkin ajanlar yetenekle aranır; sonuç yoksa açık hata döner. |
-| Mesajlaşma | İki ajan arasında mesaj ve yanıt konuşma kaydında görünür. |
-| Oda | Bir konuşmaya birden fazla ajan eklenir; sıra ve durdurma kuralı uygulanır. |
-| İzlenebilirlik | Başlama, yönlendirme, araç çağrısı, hata ve bitiş olayları zaman sırasıyla görülebilir. |
+| Ajan yönetimi | API üzerinden ajan oluşturma, düzenleme ve devre dışı bırakma kullanılabilir. |
+| Model seçimi | OpenAI sağlayıcısı ve ajan başına model adı desteklenir; araç yapılandırması uygulanmadı. |
+| Yeteneğe göre keşif | Etkin ajanlar tam yetenek eşleşmesiyle aranır; tekil olmayan veya boş eşleşme açık hata verir. |
+| Ajanlar arası mesajlaşma | İki ajan arasında kimlikle veya tekil yetenek eşleşmesiyle doğrudan mesajlaşma kullanılabilir. |
+| İnsan-ajan sohbeti | Yerel tek kullanıcılı arayüzden sohbet başlatılır; konuşma geçmişi kalıcıdır. |
+| Çalıştırma izi | Durum, ajan yapılandırması anlık görüntüsü ve sıralı olaylar API'den okunabilir. |
+| Grup odası | Birden fazla ajanın aynı konuşmada koordineli çalışması planlanıyor. |
+| Görev devri | İnsan-ajan sohbetinde en fazla bir alt görev tek etkin ajana devredilir; üst/alt görev ilişkisi, ajan anlık görüntüsü, sonuç ve olay izi saklanır. |
 
-İlk sürümün üzerinde çalışacağı en küçük uçtan uca senaryo: Kullanıcı iki ajan oluşturur; birine görev verir; bu ajan diğerini yeteneğine göre bulur; mesaj gönderir; yanıtı alır; kullanıcı bütün akışı ve sonucu arayüzde görür.
+Bir sonraki uçtan uca hedef: Görevleri kalıcı kuyruk ve dağıtık çalışanlarla yürüterek servis yeniden başlasa da çalışma durumunu güvenilir biçimde sürdürmek.
 
 ## Sonraki aşamalar
 
-1. Görev devri, koordinatör akışı ve gelişmiş grup tartışmaları.
-2. Kalıcı kuyruk ve dağıtık işçiler; yük arttığında Redis Streams, NATS veya benzeri bir bileşen değerlendirmesi.
+1. Kalıcı kuyruk ve dağıtık işçiler; yük arttığında Redis Streams, NATS veya benzeri bir bileşen değerlendirmesi.
+2. Grup odaları ve birden fazla ajanın koordinasyonu.
 3. MCP araç bağlayıcıları ve uzak ajan sistemleriyle A2A uyumluluğu.
 4. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
 
@@ -215,6 +218,6 @@ Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama 
 
 **Kararlar:** Ajan akışlarını çalıştırmak için LangGraph, HTTP API için FastAPI, veriye erişim için SQLAlchemy kullanılacak. Yerel kurulum SQLite ile başlar; aynı şema PostgreSQL'e de bağlanabilir. Ajan tanımları kayıt katmanında veri olarak tutulur ve ortak LangGraph akışı bunları çalıştırma anında yükler. İlk model sağlayıcısı OpenAI'dır.
 
-Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olacak. React/Next.js arayüzü sonraki adımda değerlendirilecek. İlk aşamada ayrı mesaj kuyruğu eklenmeyecek.
+Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olacak. Yerel tek kullanıcılı sohbet arayüzü mevcuttur; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir. İlk aşamada ayrı mesaj kuyruğu eklenmeyecek.
 
-Mevcut dilimler API tabanlıdır. Kullanıcı arayüzü, grup odaları, kuyrukta çalışan işler, kimlik doğrulama, MCP/A2A ve veritabanı migration yönetimi sonraki işlerin kapsamındadır.
+Mevcut dilimler API ve yerel sohbet arayüzü sunar. Grup odaları, çok kullanıcılı erişim ve kimlik doğrulama, kuyrukta çalışan işler, araç bağlayıcıları/MCP, A2A ve veritabanı migration yönetimi sonraki işlerin kapsamındadır.
