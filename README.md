@@ -1,6 +1,6 @@
 # Agent Runtime Platform
 
-> **Durum:** Ajanlar arası mesajlaşma, yeteneğe göre keşif, yerel insan-ajan sohbeti ve sınırlandırılmış tek alt görev devri kullanılabilir.
+> **Durum:** Ajanlar arası mesajlaşma, yeteneğe göre keşif, yerel insan-ajan sohbeti ve sınırlandırılmış tek alt görev devri kullanılabilir. Varsayılan model sağlayıcısı ChatGPT oturumuyla çalışan Codex'tir.
 
 Agent Runtime Platform, yapay zekâ ajanlarını çalışma anında tanımlayıp yönetmek, yeteneklerine göre bulmak ve birbirleriyle izlenebilir biçimde konuşturmak için tasarlanan bir platformdur. Yeni bir ajan eklemek veya devre dışı bırakmak, her seferinde uygulama kodunu değiştirmeyi gerektirmemelidir.
 
@@ -140,22 +140,23 @@ Gerçek şema, gereksinimler ve ilk uygulama sırasında belirlenecek. Bir ajan�
 
 İlk uygulama; ajanları API üzerinden kaydeder, bir konuşmaya iki ajan ekler ve bir ajanın diğerine gönderdiği mesajı tek bir genel LangGraph akışı üzerinden çalıştırır. Model seçimi ve talimatlar kayıtlı ajan tanımından yüklenir. Bir ajana özel Python sınıfı veya ayrı derlenmiş grafik gerekmez.
 
-Mesajlar, çalıştırmalar, ajan tanımı anlık görüntüleri ve sıralı olaylar veritabanında saklanır. İlk sağlayıcı OpenAI'dır; otomatik testler sahte sağlayıcı kullanır ve gerçek bir model çağrısı yapmaz.
+Mesajlar, çalıştırmalar, ajan tanımı anlık görüntüleri ve sıralı olaylar veritabanında saklanır. Varsayılan sağlayıcı, sunucudaki ChatGPT girişiyle çalışan resmî Codex Python SDK'dır. OpenAI API anahtarıyla çalışan eski sağlayıcı isteğe bağlı olarak kullanılabilir. Otomatik testler sahte sağlayıcı kullanır ve gerçek bir model çağrısı yapmaz.
 
 ### Gereksinimler
 
 - Python 3.11 veya üstü
 - [uv](https://docs.astral.sh/uv/)
-- Gerçek bir model çalıştırmak için OpenAI API anahtarı
+- Gerçek model yanıtları için sunucuda ChatGPT hesabıyla giriş yapılmış Codex oturumu
 
 ### Yerelde çalıştırma
 
 ```bash
 uv sync --extra dev
 cp .env.example .env
+codex login status
 ```
 
-`.env` dosyasına `OPENAI_API_KEY` değerini ekleyin. Ajan kayıtları varsayılan olarak `data/agent_runtime.db` SQLite veritabanında tutulur. Ardından:
+Giriş görünmüyorsa `codex login --device-auth` komutunu çalıştırıp tarayıcıda hesabınızla oturum açın. `.env` yalnızca yerel veritabanı ayarını içerir; Codex oturum bilgileri buraya kopyalanmaz. Ajan kayıtları varsayılan olarak `data/agent_runtime.db` SQLite veritabanında tutulur. Ardından:
 
 ```bash
 uv run uvicorn agent_runtime_platform.main:app --app-dir src --reload
@@ -167,7 +168,7 @@ API belgeleri `http://127.0.0.1:8000/docs` adresinde açılır. Kontrolleri çal
 uv run pytest
 ```
 
-Tarayıcı sohbetini `http://127.0.0.1:8000/` adresinden açın. İlk ajanı oluşturmak için soldaki formda OpenAI model kimliği ve talimatları girin; ardından ajanla mesajlaşabilirsiniz. Sohbet geçmişi veritabanında tutulur ve sayfa yenilendiğinde yüklenir.
+Tarayıcı sohbetini `http://127.0.0.1:8000/` adresinden açın. İlk ajanı oluşturmak için soldaki formda Codex model kimliğini (örneğin `gpt-6-sol`) ve talimatları girin; ardından ajanla mesajlaşabilirsiniz. Sohbet geçmişi veritabanında tutulur ve sayfa yenilendiğinde yüklenir.
 
 PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `postgresql+psycopg://user:password@localhost:5432/agent_runtime` olarak ayarlayın.
 
@@ -190,14 +191,14 @@ PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `pos
 
 Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama ve çok kullanıcılı erişim bu dilimde yoktur.
 
-İstek gövdesi ve hata biçimleri için `/docs` içindeki OpenAPI arayüzünü kullanın. Gerçek model çağrısı OpenAI API kullanımı doğurur; testler bu servise bağlanmaz.
+İstek gövdesi ve hata biçimleri için `/docs` içindeki OpenAPI arayüzünü kullanın. `codex` sağlayıcısı resmî Codex SDK üzerinden sunucudaki mevcut ChatGPT oturumunu kullanır; API anahtarı gerekmez. Ajan çağrıları salt okunur sandbox içinde, komut ve web araçları kapalı olarak yürütülür. Codex kullanım limitleri ChatGPT planına bağlıdır. Eski `openai` sağlayıcısını özellikle seçerseniz ayrıca `OPENAI_API_KEY` ayarlamanız ve API kullanımını karşılamanız gerekir. Testler hiçbir canlı model servisine bağlanmaz.
 
 ## MVP kapsamı ve uygulama durumu
 
 | İşlev | Mevcut durum |
 | --- | --- |
 | Ajan yönetimi | API üzerinden ajan oluşturma, düzenleme ve devre dışı bırakma kullanılabilir. |
-| Model seçimi | OpenAI sağlayıcısı ve ajan başına model adı desteklenir; araç yapılandırması uygulanmadı. |
+| Model seçimi | Varsayılan Codex (ChatGPT girişi) ve isteğe bağlı OpenAI API sağlayıcısı ile ajan başına model adı desteklenir; araç yapılandırması uygulanmadı. |
 | Yeteneğe göre keşif | Etkin ajanlar tam yetenek eşleşmesiyle aranır; tekil olmayan veya boş eşleşme açık hata verir. |
 | Ajanlar arası mesajlaşma | İki ajan arasında kimlikle veya tekil yetenek eşleşmesiyle doğrudan mesajlaşma kullanılabilir. |
 | İnsan-ajan sohbeti | Yerel tek kullanıcılı arayüzden sohbet başlatılır; konuşma geçmişi kalıcıdır. |
@@ -216,7 +217,7 @@ Bir sonraki uçtan uca hedef: Görevleri kalıcı kuyruk ve dağıtık çalışa
 
 ## Teknoloji yönü
 
-**Kararlar:** Ajan akışlarını çalıştırmak için LangGraph, HTTP API için FastAPI, veriye erişim için SQLAlchemy kullanılacak. Yerel kurulum SQLite ile başlar; aynı şema PostgreSQL'e de bağlanabilir. Ajan tanımları kayıt katmanında veri olarak tutulur ve ortak LangGraph akışı bunları çalıştırma anında yükler. İlk model sağlayıcısı OpenAI'dır.
+**Kararlar:** Ajan akışlarını çalıştırmak için LangGraph, HTTP API için FastAPI, veriye erişim için SQLAlchemy kullanılacak. Yerel kurulum SQLite ile başlar; aynı şema PostgreSQL'e de bağlanabilir. Ajan tanımları kayıt katmanında veri olarak tutulur ve ortak LangGraph akışı bunları çalıştırma anında yükler. Varsayılan model sağlayıcısı, ChatGPT oturumunu kullanan Codex'tir; OpenAI API sağlayıcısı da isteğe bağlıdır.
 
 Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olacak. Yerel tek kullanıcılı sohbet arayüzü mevcuttur; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir. İlk aşamada ayrı mesaj kuyruğu eklenmeyecek.
 

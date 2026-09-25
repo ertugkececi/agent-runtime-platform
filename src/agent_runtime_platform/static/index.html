@@ -84,7 +84,7 @@
       <aside class="panel">
         <h1>Sohbet</h1>
         <p class="muted">Bir ajan seç ve konuşmaya başla. Sohbet geçmişin bu yerel veritabanında saklanır.</p>
-        <p class="muted">Gerçek yanıt için sunucuda <code>OPENAI_API_KEY</code> ayarlı olmalı.</p>
+        <p class="muted">Codex sağlayıcısı sunucudaki ChatGPT girişini kullanır (<code>codex login status</code>).</p>
         <label for="agent-select">Ajan</label>
         <select id="agent-select" aria-label="Sohbet edilecek ajan"></select>
         <button class="button secondary full" id="new-chat" type="button">Yeni sohbet</button>
@@ -94,8 +94,8 @@
           <form id="create-agent-form">
             <label for="agent-name">Ad</label>
             <input id="agent-name" name="name" value="Kişisel Asistan" maxlength="120" required />
-            <label for="model-name">OpenAI model kimliği</label>
-            <input id="model-name" name="model_name" placeholder="Örn. model kimliği" maxlength="160" required />
+            <label for="model-name">Codex model kimliği</label>
+            <input id="model-name" name="model_name" value="gpt-6-sol" maxlength="160" required />
             <label for="agent-instructions">Talimatlar</label>
             <textarea id="agent-instructions" name="instructions" maxlength="20000" required>Yardımcı bir asistansın. Kullanıcının diliyle yanıt ver.</textarea>
             <label for="agent-capabilities">Yetenekler (virgülle ayır)</label>
@@ -245,7 +245,7 @@
             body: JSON.stringify({
               name: document.getElementById("agent-name").value,
               instructions: document.getElementById("agent-instructions").value,
-              model_provider: "openai",
+              model_provider: "codex",
               model_name: document.getElementById("model-name").value,
               capabilities,
             }),

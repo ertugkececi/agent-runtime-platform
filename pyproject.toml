@@ -16,6 +16,7 @@ dependencies = [
     "psycopg[binary]>=3.2,<4.0",
     "python-dotenv>=1.0,<2.0",
     "uvicorn[standard]>=0.34,<1.0",
+    "openai-codex>=0.156,<0.157",
 ]
 
 [project.optional-dependencies]
