@@ -25,7 +25,7 @@ class CodexLoginTests(unittest.TestCase):
                 )
 
             def login_chatgpt_device_code(self):
-                self.fail("Device login should not start for a signed-in user.")
+                raise AssertionError("Device login should not start for a signed-in user.")
 
         output = io.StringIO()
         with patch.dict(sys.modules, {"openai_codex": types.SimpleNamespace(Codex=StubCodex)}):
