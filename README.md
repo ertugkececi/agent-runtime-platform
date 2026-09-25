@@ -1,6 +1,6 @@
 # Agent Runtime Platform
 
-> **Durum:** Ürün vizyonu ve ilk sürüm taslağı. Bu repoda henüz çalışan uygulama bulunmuyor.
+> **Durum:** İlk çalışan API dilimi eklendi. Ajanları kaydedip iki ajan arasında izlenebilir doğrudan mesaj çalıştırabilirsiniz.
 
 Agent Runtime Platform, yapay zekâ ajanlarını çalışma anında tanımlayıp yönetmek, yeteneklerine göre bulmak ve birbirleriyle izlenebilir biçimde konuşturmak için tasarlanan bir platformdur. Yeni bir ajan eklemek veya devre dışı bırakmak, her seferinde uygulama kodunu değiştirmeyi gerektirmemelidir.
 
@@ -136,6 +136,50 @@ Gerçek şema, gereksinimler ve ilk uygulama sırasında belirlenecek. Bir ajan�
 - Hatalar, denemeler ve kararlar olay kayıtlarında izlenir; gizli bilgiler loglara yazılmaz.
 - Çalışma sırasındaki bir ajan değişikliği, başlamış çalıştırmanın sürümünü geriye dönük değiştirmez.
 
+## İlk çalışan dilim
+
+İlk uygulama; ajanları API üzerinden kaydeder, bir konuşmaya iki ajan ekler ve bir ajanın diğerine gönderdiği mesajı tek bir genel LangGraph akışı üzerinden çalıştırır. Model seçimi ve talimatlar kayıtlı ajan tanımından yüklenir. Bir ajana özel Python sınıfı veya ayrı derlenmiş grafik gerekmez.
+
+Mesajlar, çalıştırmalar, ajan tanımı anlık görüntüleri ve sıralı olaylar veritabanında saklanır. İlk sağlayıcı OpenAI'dır; otomatik testler sahte sağlayıcı kullanır ve gerçek bir model çağrısı yapmaz.
+
+### Gereksinimler
+
+- Python 3.11 veya üstü
+- [uv](https://docs.astral.sh/uv/)
+- Gerçek bir model çalıştırmak için OpenAI API anahtarı
+
+### Yerelde çalıştırma
+
+```bash
+uv sync --extra dev
+cp .env.example .env
+```
+
+`.env` dosyasına `OPENAI_API_KEY` değerini ekleyin. Ajan kayıtları varsayılan olarak `data/agent_runtime.db` SQLite veritabanında tutulur. Ardından:
+
+```bash
+uv run uvicorn agent_runtime_platform.main:app --app-dir src --reload
+```
+
+API belgeleri `http://127.0.0.1:8000/docs` adresinde açılır. Kontrolleri çalıştırmak için:
+
+```bash
+uv run pytest
+```
+
+PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `postgresql+psycopg://user:password@localhost:5432/agent_runtime` olarak ayarlayın.
+
+### API akışı
+
+1. `POST /agents` ile iki ajan oluşturun. Her biri için `name`, `instructions`, `model_provider` (`openai`) ve `model_name` gerekir.
+2. `POST /conversations` ile `agent_ids` listesini gönderin.
+3. `POST /conversations/{conversation_id}/messages` ile `sender_agent_id`, `recipient_agent_id` ve `content` gönderin.
+4. Yanıttaki çalıştırma kimliğiyle `GET /runs/{run_id}` üzerinden mesajları, durum bilgisini ve olay izini okuyun. Konuşmanın tamamı `GET /conversations/{conversation_id}` üzerinden alınabilir.
+
+`PATCH /agents/{agent_id}` ajan ayarlarını değiştirir veya `{"enabled": false}` ile yeni çalıştırmalarda kullanılmasını engeller. Her değişiklik ajan sürümünü artırır. Çalışan her görev, başlangıçta kullandığı talimat/model anlık görüntüsünü saklar; çalıştırma API'si talimat içeriğini döndürmez.
+
+İstek gövdesi ve hata biçimleri için `/docs` içindeki OpenAPI arayüzünü kullanın. Gerçek model çağrısı OpenAI API kullanımı doğurur; testler bu servise bağlanmaz.
+
 ## MVP kapsamı ve kabul ölçütleri
 
 | İşlev | Kabul ölçütü |
@@ -158,8 +202,8 @@ Gerçek şema, gereksinimler ve ilk uygulama sırasında belirlenecek. Bir ajan�
 
 ## Teknoloji yönü
 
-**Karar:** Ajan akışlarını çalıştırmak için LangGraph kullanılacak. Ajan tanımları ve yetenekleri kayıt katmanında veri olarak tutulacak; ortak bir LangGraph akışı çalıştırma anında bu tanımları yükleyecek. Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olacak.
+**Kararlar:** Ajan akışlarını çalıştırmak için LangGraph, HTTP API için FastAPI, veriye erişim için SQLAlchemy kullanılacak. Yerel kurulum SQLite ile başlar; aynı şema PostgreSQL'e de bağlanabilir. Ajan tanımları kayıt katmanında veri olarak tutulur ve ortak LangGraph akışı bunları çalıştırma anında yükler. İlk model sağlayıcısı OpenAI'dır.
 
-React/Next.js arayüz, FastAPI servis ve PostgreSQL kayıt katmanı başlangıç için önerilen adaylardır; uygulama iskeleti kurulurken kesinleştirilecek. İlk aşamada ayrı bir mesaj kuyruğu eklenmeyecek; ihtiyaç yük ve teslimat gereksinimleriyle ölçüldükten sonra değerlendirilecek.
+Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olacak. React/Next.js arayüzü sonraki adımda değerlendirilecek. İlk aşamada ayrı mesaj kuyruğu eklenmeyecek.
 
-Bu repo şu anda ürün tanımını barındırır. Kod, kurulum komutları, lisans ve çalışma garantisi henüz yoktur.
+Mevcut dilim API tabanlıdır. Kullanıcı arayüzü, yetenekle ajan keşfi, grup odaları, kuyrukta çalışan işler, kimlik doğrulama, MCP/A2A ve veritabanı migration yönetimi sonraki işlerin kapsamındadır.
