@@ -1,0 +1,13 @@
+[Unit]
+Description=Agent Runtime Platform (local only)
+
+[Service]
+Type=simple
+WorkingDirectory=/home/opc/apps/agent-runtime-platform
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/opc/apps/agent-runtime-platform/.venv/bin/uvicorn agent_runtime_platform.main:app --app-dir src --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
