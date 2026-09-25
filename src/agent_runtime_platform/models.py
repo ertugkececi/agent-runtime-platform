@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def new_id() -> str:
@@ -32,6 +32,19 @@ class Agent(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    capability_records: Mapped[list["AgentCapability"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class AgentCapability(Base):
+    __tablename__ = "agent_capabilities"
+
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True)
+    capability: Mapped[str] = mapped_column(String(80), primary_key=True)
+    agent: Mapped["Agent"] = relationship(back_populates="capability_records")
 
 
 class Conversation(Base):
