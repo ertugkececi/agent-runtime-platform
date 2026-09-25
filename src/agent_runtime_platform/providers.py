@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import tempfile
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -113,9 +115,105 @@ class OpenAIChatProvider:
         return content.strip()
 
 
+class CodexChatProvider:
+    """Run local Codex using the server user's existing ChatGPT login."""
+
+    _HANDOFF_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "type": {"type": "string", "enum": ["reply", "handoff"]},
+            "content": {"type": "string"},
+            "capability": {"type": "string"},
+            "task": {"type": "string"},
+        },
+        "required": ["type", "content", "capability", "task"],
+        "additionalProperties": False,
+    }
+
+    def generate(
+        self,
+        agent: dict[str, Any],
+        history: list[dict[str, str]],
+        *,
+        allow_handoff: bool = False,
+    ) -> ModelOutput:
+        from openai_codex import ApprovalMode, Codex, Sandbox
+
+        instructions = (
+            "You are the agent in the conversation below. Follow the agent instructions. "
+            "Answer in the user's language. Do not use tools, inspect files, or run commands.\n\n"
+            f"Agent instructions:\n{agent['instructions']}"
+        )
+        if allow_handoff:
+            instructions += (
+                "\n\nIf one bounded subtask genuinely requires another agent, return a "
+                "handoff with its exact capability and a specific task. Otherwise return "
+                "a reply. Use empty strings for fields that do not apply. A handoff "
+                "result will be supplied in a later invocation."
+            )
+        prompt = (
+            "Here is the conversation history in chronological order as JSON. "
+            "Respond to the latest user message; earlier messages are context.\n"
+            + json.dumps(history, ensure_ascii=False)
+        )
+        try:
+            with tempfile.TemporaryDirectory(prefix="agent-runtime-codex-") as cwd:
+                with Codex() as codex:
+                    account = codex.account().account
+                    if account is None or account.root.type != "chatgpt":
+                        raise ProviderError(
+                            "Codex needs a ChatGPT login. Run 'codex login' on the server."
+                        )
+                    thread = codex.thread_start(
+                        model=agent["model_name"],
+                        cwd=cwd,
+                        ephemeral=True,
+                        sandbox=Sandbox.read_only,
+                        approval_mode=ApprovalMode.deny_all,
+                        developer_instructions=instructions,
+                        config={
+                            "features": {
+                                "shell_tool": False,
+                                "unified_exec": False,
+                                "multi_agent": False,
+                                "remote_plugin": False,
+                            },
+                            "web_search": "disabled",
+                        },
+                    )
+                    result = thread.run(
+                        prompt,
+                        **({"output_schema": self._HANDOFF_SCHEMA} if allow_handoff else {}),
+                    )
+        except ProviderError:
+            raise
+        except Exception as exc:
+            raise ProviderError("The Codex model request failed.") from exc
+
+        if result.error is not None or not result.final_response:
+            raise ProviderError("The Codex model request failed.")
+        if not allow_handoff:
+            return result.final_response.strip()
+
+        try:
+            action = json.loads(result.final_response)
+            if action["type"] == "handoff":
+                return HandoffRequest(
+                    capability=action["capability"], task=action["task"]
+                )
+            if action["type"] == "reply":
+                return action["content"].strip()
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProviderError("Codex returned an invalid response.") from exc
+        raise ProviderError("Codex returned an unsupported response.")
+
+
 class ProviderRegistry:
     def __init__(self, providers: dict[str, ModelProvider] | None = None) -> None:
-        self._providers = providers or {"openai": OpenAIChatProvider()}
+        self._providers = providers if providers is not None else {
+            "codex": CodexChatProvider(),
+            "openai": OpenAIChatProvider(),
+        }
 
     def supports(self, provider_name: str) -> bool:
         return provider_name in self._providers

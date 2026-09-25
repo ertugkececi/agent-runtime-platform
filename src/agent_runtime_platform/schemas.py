@@ -23,7 +23,7 @@ class AgentCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=500)
     instructions: str = Field(min_length=1, max_length=20_000)
-    model_provider: Literal["openai"] = "openai"
+    model_provider: Literal["codex", "openai"] = "codex"
     model_name: str = Field(min_length=1, max_length=160)
     enabled: bool = True
     capabilities: list[str] = Field(default_factory=list, max_length=30)
@@ -54,7 +54,7 @@ class AgentUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=500)
     instructions: str | None = Field(default=None, min_length=1, max_length=20_000)
-    model_provider: Literal["openai"] | None = None
+    model_provider: Literal["codex", "openai"] | None = None
     model_name: str | None = Field(default=None, min_length=1, max_length=160)
     enabled: bool | None = None
     capabilities: list[str] | None = Field(default=None, max_length=30)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,6 +12,7 @@ from sqlalchemy import func, select
 from agent_runtime_platform.api import create_app
 from agent_runtime_platform.models import HumanChatRun, Run, Task
 from agent_runtime_platform.providers import (
+    CodexChatProvider,
     HandoffRequest,
     OpenAIChatProvider,
     ProviderError,
@@ -667,3 +670,64 @@ def test_openai_provider_maps_only_an_explicit_tool_call_to_a_handoff(monkeypatc
     assert created[0].tools[0]["name"] == "handoff_to_agent"
     assert "You may use the handoff_to_agent tool once" in created[0].messages[0][1]
     assert created[1].tools == []
+
+
+def test_codex_provider_uses_existing_login_without_api_key_and_bounded_handoff(monkeypatch):
+    import openai_codex
+
+    calls: list[dict[str, Any]] = []
+    replies = [
+        json.dumps(
+            {"type": "handoff", "content": "", "capability": " RESEARCH ", "task": "Find sources."}
+        ),
+        "Merhaba.",
+    ]
+
+    class StubCodex:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def account(self):
+            return SimpleNamespace(account=SimpleNamespace(root=SimpleNamespace(type="chatgpt")))
+
+        def thread_start(self, **options):
+            calls.append(options)
+            return self
+
+        def run(self, prompt, **options):
+            calls[-1]["prompt"] = prompt
+            calls[-1]["turn_options"] = options
+            return SimpleNamespace(error=None, final_response=replies.pop(0))
+
+    monkeypatch.setattr(openai_codex, "Codex", StubCodex)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    registry = ProviderRegistry({"codex": CodexChatProvider()})
+    agent = {
+        "id": "agent-1",
+        "instructions": "Answer in Turkish.",
+        "model_provider": "codex",
+        "model_name": "gpt-6-sol",
+    }
+    history = [{"role": "user", "content": "Research this."}]
+
+    handoff = registry.generate(agent, history, allow_handoff=True)
+    response = registry.generate(agent, history)
+
+    assert handoff == HandoffRequest(capability="research", task="Find sources.")
+    assert response == "Merhaba."
+    assert calls[0]["turn_options"]["output_schema"]["properties"]["type"]["enum"] == [
+        "reply", "handoff"
+    ]
+    assert calls[1]["turn_options"] == {}
+    assert calls[0]["model"] == "gpt-6-sol"
+    assert calls[0]["sandbox"] == openai_codex.Sandbox.read_only
+    assert calls[0]["approval_mode"] == openai_codex.ApprovalMode.deny_all
+    assert calls[0]["config"]["features"]["shell_tool"] is False
+    assert calls[0]["config"]["features"]["unified_exec"] is False
+    assert calls[0]["config"]["web_search"] == "disabled"
+    assert calls[0]["ephemeral"] is True
+    assert not Path(calls[0]["cwd"]).exists()
+    assert "Research this." in calls[0]["prompt"]
