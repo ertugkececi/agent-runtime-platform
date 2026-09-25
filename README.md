@@ -174,16 +174,17 @@ PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `pos
 
 ### Oracle sunucuda kalıcı servis ve telefondan erişim
 
-Bu depo `/home/opc/apps/agent-runtime-platform` konumunda kuruluysa, `uv sync --extra dev --locked` ve `uv run --locked agent-runtime-login` adımlarından sonra systemd servisini kurun:
+Bu depo `/home/opc/apps/agent-runtime-platform` konumunda kuruluysa, `uv sync --extra dev --locked` ve `uv run --locked agent-runtime-login` adımlarından sonra `opc` kullanıcısı altında systemd servisini kurun:
 
 ```bash
-sudo install -m 644 deploy/systemd/agent-runtime-platform.service /etc/systemd/system/agent-runtime-platform.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now agent-runtime-platform.service
+mkdir -p ~/.config/systemd/user
+install -m 644 deploy/systemd/user/agent-runtime-platform.service ~/.config/systemd/user/agent-runtime-platform.service
+systemctl --user daemon-reload
+systemctl --user enable --now agent-runtime-platform.service
 curl -fsS http://127.0.0.1:8000/health
 ```
 
-Servis yalnızca `127.0.0.1:8000` adresini dinler. Telefonda özel erişim için [Tailscale'in Oracle Linux 9 paketini](https://dl.tailscale.com/stable/) kurup aynı özel ağa bağlanın:
+`loginctl show-user opc -p Linger` çıktısı `Linger=yes` olmalıdır; `no` ise `sudo loginctl enable-linger opc` komutu kullanıcı servisinin SSH oturumu kapandıktan sonra da çalışmasını sağlar. Servis yalnızca `127.0.0.1:8000` adresini dinler. Telefonda özel erişim için [Tailscale'in Oracle Linux 9 paketini](https://dl.tailscale.com/stable/) kurup aynı özel ağa bağlanın:
 
 ```bash
 sudo dnf config-manager --add-repo https://pkgs.tailscale.com/stable/oracle/9/tailscale.repo
