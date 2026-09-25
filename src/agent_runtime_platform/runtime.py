@@ -78,6 +78,7 @@ def _agent_snapshot(agent: Agent) -> dict[str, Any]:
         "instructions": agent.instructions,
         "model_provider": agent.model_provider,
         "model_name": agent.model_name,
+        "model_reasoning_effort": agent.model_reasoning_effort,
         "capabilities": sorted(item.capability for item in agent.capability_records),
         "version": agent.version,
     }
@@ -89,6 +90,7 @@ def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "name": snapshot["name"],
         "model_provider": snapshot["model_provider"],
         "model_name": snapshot["model_name"],
+        "model_reasoning_effort": snapshot.get("model_reasoning_effort"),
         "capabilities": snapshot["capabilities"],
         "version": snapshot["version"],
     }
@@ -102,6 +104,7 @@ def _agent_payload(agent: Agent) -> dict[str, Any]:
         "instructions": agent.instructions,
         "model_provider": agent.model_provider,
         "model_name": agent.model_name,
+        "model_reasoning_effort": agent.model_reasoning_effort,
         "enabled": agent.enabled,
         "capabilities": sorted(item.capability for item in agent.capability_records),
         "version": agent.version,

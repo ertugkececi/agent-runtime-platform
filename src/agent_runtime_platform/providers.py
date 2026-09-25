@@ -115,6 +115,23 @@ class OpenAIChatProvider:
         return content.strip()
 
 
+def list_codex_models() -> list[dict[str, Any]]:
+    """Expose the model and effort choices available to the current Codex account."""
+    from openai_codex import Codex
+
+    with Codex() as codex:
+        return [
+            {
+                "id": model.model,
+                "label": model.display_name,
+                "is_default": model.is_default,
+                "default_effort": model.default_reasoning_effort.value,
+                "efforts": [option.reasoning_effort.value for option in model.supported_reasoning_efforts],
+            }
+            for model in codex.models().data
+        ]
+
+
 class CodexChatProvider:
     """Run local Codex using the server user's existing ChatGPT login."""
 
@@ -172,6 +189,8 @@ class CodexChatProvider:
                         approval_mode=ApprovalMode.deny_all,
                         developer_instructions=instructions,
                         config={
+                            **({"model_reasoning_effort": agent["model_reasoning_effort"]}
+                               if agent.get("model_reasoning_effort") else {}),
                             "features": {
                                 "shell_tool": False,
                                 "unified_exec": False,

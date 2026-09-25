@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -28,6 +28,12 @@ class Database:
             event.listen(self.engine, "connect", self._enable_sqlite_foreign_keys)
         self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False, class_=Session)
         Base.metadata.create_all(self.engine)
+        # Existing installations were created before agents had an effort column.
+        if "model_reasoning_effort" not in {
+            column["name"] for column in inspect(self.engine).get_columns("agents")
+        }:
+            with self.engine.begin() as connection:
+                connection.execute(text("ALTER TABLE agents ADD COLUMN model_reasoning_effort VARCHAR(16)"))
 
     @staticmethod
     def _enable_sqlite_foreign_keys(connection, _record) -> None:

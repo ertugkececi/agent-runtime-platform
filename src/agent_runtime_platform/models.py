@@ -28,6 +28,7 @@ class Agent(Base):
     instructions: Mapped[str] = mapped_column(Text, nullable=False)
     model_provider: Mapped[str] = mapped_column(String(40), nullable=False)
     model_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    model_reasoning_effort: Mapped[str | None] = mapped_column(String(16), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)

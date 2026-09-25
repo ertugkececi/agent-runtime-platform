@@ -128,13 +128,15 @@
           <form id="create-agent-form">
             <label for="agent-name">Ad</label>
             <input id="agent-name" name="name" value="Kişisel Asistan" maxlength="120" required />
-            <label for="model-name">Codex model kimliği</label>
-            <input id="model-name" name="model_name" value="gpt-6-sol" maxlength="160" required />
+            <label for="model-name">Codex modeli</label>
+            <select id="model-name" name="model_name" required disabled><option value="">Modeller yükleniyor…</option></select>
+            <label for="model-effort">Düşünme eforu</label>
+            <select id="model-effort" name="model_reasoning_effort" required disabled></select>
             <label for="agent-instructions">Talimatlar</label>
             <textarea id="agent-instructions" name="instructions" maxlength="20000" required>Yardımcı bir asistansın. Kullanıcının diliyle yanıt ver.</textarea>
             <label for="agent-capabilities">Yetenekler (virgülle ayır)</label>
             <input id="agent-capabilities" name="capabilities" placeholder="araştırma, yazılım" />
-            <button class="button full" id="create-agent-button" type="submit">Ajanı oluştur</button>
+            <button class="button full" id="create-agent-button" type="submit" disabled>Ajanı oluştur</button>
           </form>
         </details>
       </aside>
@@ -160,6 +162,9 @@
       const messageInput = document.getElementById("message-input");
       const emptyState = document.getElementById("empty-state");
       const createAgentDetails = document.getElementById("create-agent-details");
+      const modelSelect = document.getElementById("model-name");
+      const effortSelect = document.getElementById("model-effort");
+      const createAgentButton = document.getElementById("create-agent-button");
       const themeToggle = document.getElementById("theme-toggle");
       function applyTheme(theme) {
         const isDark = theme === "dark";
@@ -175,6 +180,7 @@
       applyTheme(document.documentElement.dataset.theme);
       let conversationId = localStorage.getItem("agentRuntimeConversationId") || "";
       let agents = [];
+      let codexModels = [];
 
       async function request(path, options = {}) {
         const response = await fetch(path, {
@@ -195,6 +201,45 @@
       function setStatus(message, isError = false) {
         statusElement.textContent = message;
         statusElement.classList.toggle("error", isError);
+      }
+
+      const effortLabels = { low: "Düşük", medium: "Orta", high: "Yüksek", xhigh: "Çok yüksek", max: "Maksimum", ultra: "Ultra" };
+      function updateEffortOptions() {
+        const model = codexModels.find((item) => item.id === modelSelect.value);
+        effortSelect.replaceChildren();
+        if (!model) {
+          effortSelect.disabled = true;
+          createAgentButton.disabled = true;
+          return;
+        }
+        for (const effort of model.efforts) {
+          const option = document.createElement("option");
+          option.value = effort;
+          option.textContent = effortLabels[effort] || effort;
+          effortSelect.append(option);
+        }
+        if (model.efforts.includes(model.default_effort)) effortSelect.value = model.default_effort;
+        effortSelect.disabled = !model.efforts.length;
+        createAgentButton.disabled = effortSelect.disabled;
+      }
+      modelSelect.addEventListener("change", updateEffortOptions);
+
+      async function loadCodexModels() {
+        const models = await request("/codex/models");
+        if (!Array.isArray(models) || !models.length) throw new Error("Seçilebilir Codex modeli bulunamadı.");
+        codexModels = models;
+        modelSelect.replaceChildren();
+        for (const model of models) {
+          const option = document.createElement("option");
+          option.value = model.id;
+          option.textContent = `${model.label} (${model.id})`;
+          modelSelect.append(option);
+        }
+        modelSelect.value = models.find((model) => model.id === "gpt-6-sol")?.id
+          || models.find((model) => model.is_default)?.id || models[0].id;
+        modelSelect.disabled = false;
+        updateEffortOptions();
+        createAgentButton.disabled = effortSelect.disabled;
       }
 
       function renderMessages(items) {
@@ -294,6 +339,7 @@
               instructions: document.getElementById("agent-instructions").value,
               model_provider: "codex",
               model_name: document.getElementById("model-name").value,
+              model_reasoning_effort: document.getElementById("model-effort").value,
               capabilities,
             }),
           });
@@ -352,7 +398,7 @@
         }
       });
 
-      loadAgents().catch((error) => setStatus(error.message, true));
+      loadAgents().then(loadCodexModels).catch((error) => setStatus(error.message, true));
     </script>
   </body>
 </html>
