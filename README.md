@@ -153,10 +153,10 @@ Mesajlar, çalıştırmalar, ajan tanımı anlık görüntüleri ve sıralı ola
 ```bash
 uv sync --extra dev
 cp .env.example .env
-codex login status
+uv run --locked agent-runtime-login
 ```
 
-Giriş görünmüyorsa `codex login --device-auth` komutunu çalıştırıp tarayıcıda hesabınızla oturum açın. `.env` yalnızca yerel veritabanı ayarını içerir; Codex oturum bilgileri buraya kopyalanmaz. Ajan kayıtları varsayılan olarak `data/agent_runtime.db` SQLite veritabanında tutulur. Ardından:
+Giriş açıksa komut durumu gösterir; değilse Codex SDK üzerinden cihaz kodu ve doğrulama adresi verir. Global Codex CLI kurmanız gerekmez. `.env` yalnızca yerel veritabanı ayarını içerir; Codex oturum bilgileri buraya kopyalanmaz. Ajan kayıtları varsayılan olarak `data/agent_runtime.db` SQLite veritabanında tutulur. Ardından:
 
 ```bash
 uv run uvicorn agent_runtime_platform.main:app --app-dir src --reload
@@ -172,9 +172,33 @@ Tarayıcı sohbetini `http://127.0.0.1:8000/` adresinden açın. İlk ajanı olu
 
 PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `postgresql+psycopg://user:password@localhost:5432/agent_runtime` olarak ayarlayın.
 
+### Oracle sunucuda kalıcı servis ve telefondan erişim
+
+Bu depo `/home/opc/apps/agent-runtime-platform` konumunda kuruluysa, `uv sync --extra dev --locked` ve `uv run --locked agent-runtime-login` adımlarından sonra systemd servisini kurun:
+
+```bash
+sudo install -m 644 deploy/systemd/agent-runtime-platform.service /etc/systemd/system/agent-runtime-platform.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now agent-runtime-platform.service
+curl -fsS http://127.0.0.1:8000/health
+```
+
+Servis yalnızca `127.0.0.1:8000` adresini dinler. Telefonda özel erişim için [Tailscale'in Oracle Linux 9 paketini](https://dl.tailscale.com/stable/) kurup aynı özel ağa bağlanın:
+
+```bash
+sudo dnf config-manager --add-repo https://pkgs.tailscale.com/stable/oracle/9/tailscale.repo
+sudo dnf install -y tailscale
+sudo systemctl enable --now tailscaled
+sudo tailscale up
+sudo tailscale serve --bg 8000
+sudo tailscale serve status
+```
+
+`tailscale up` tarafından verilen bağlantıdan sunucuya giriş yapın. [iPhone'a Tailscale'i kurup](https://tailscale.com/docs/install/ios) aynı hesaba giriş yaptığınızda `tailscale serve status` çıktısındaki özel HTTPS adresini açın. Uygulamanın kendi kullanıcı girişi henüz yoktur; bu adres yalnızca özel ağ üyelerine açılır.
+
 ### API akışı
 
-1. `POST /agents` ile iki ajan oluşturun. Her biri için `name`, `instructions`, `model_provider` (`openai`) ve `model_name` gerekir. `capabilities` isteğe bağlıdır; örneğin `{"capabilities": ["backend", "api"]}`.
+1. `POST /agents` ile iki ajan oluşturun. Her biri için `name`, `instructions`, `model_provider` (varsayılan `codex`) ve `model_name` gerekir. `capabilities` isteğe bağlıdır; örneğin `{"capabilities": ["backend", "api"]}`.
 2. `POST /conversations` ile `agent_ids` listesini gönderin.
 3. `GET /agents?capability=backend` ile bu yeteneğe sahip etkin ajanları arayın. Eşleşme tamdır; yetenekler kaydedilirken ve aranırken boşluklardan arındırılıp küçük harfe dönüştürülür.
 4. `POST /conversations/{conversation_id}/messages` isteğinde `sender_agent_id`, `content` ve alıcılardan yalnızca birini gönderin: `recipient_agent_id` veya `recipient_capability`. Yetenek eşleşmesi tek bir etkin ajan bulursa o ajan konuşmaya otomatik eklenir. Hiç eşleşme yoksa `404`, birden fazla eşleşme varsa `409` döner. Kimlikle gönderimde iki ajan da önceden konuşma üyesi olmalıdır.
