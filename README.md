@@ -10,15 +10,14 @@ Bir kullanıcı arayüzünden veya API'den ajan oluştur; modele, talimatlara, y
 
 **Temel ilke:** Ajan tanımı veridir; çalışma zamanı bu tanımı okuyarak ajanı çalıştırır. Ajan kayıtları, görevler, konuşmalar, mesajlar ve çalıştırma kayıtları ayrı kavramlardır.
 
-## İlk sürümde kullanıcı ne yapabilecek?
+## Bugün kullanılabilenler
 
-1. Arayüz veya API üzerinden ajan oluşturacak, düzenleyecek ve devre dışı bırakacak.
-2. Ajan için model sağlayıcısı, model, talimat, yetenek ve izin verilen araçları tanımlayacak.
-3. Ajanlar arasında doğrudan mesaj gönderecek ve bir ajanın başka ajanı yeteneğine göre bulmasını sağlayacak.
-4. Birden fazla ajanın katıldığı bir konuşma odası açacak.
-5. Mesajları, görevleri ve çalıştırma olaylarını zaman çizelgesinde izleyecek.
+- Ajanları API üzerinden oluşturma, düzenleme ve devre dışı bırakma.
+- Ajanlar arasında doğrudan mesajlaşma; alıcıyı kimlikle veya tekil yetenek eşleşmesiyle belirleme.
+- Yerel, tek kullanıcılı tarayıcı arayüzünde etkin bir ajan seçip insan-ajan sohbeti yapma; geçmiş yenileme sonrasında yüklenir.
+- Çalıştırma durumlarını, kullanılan ajan yapılandırması anlık görüntülerini ve sıralı olay izlerini API üzerinden görüntüleme.
 
-Bu maddeler **hedeflenen özelliklerdir**; mevcut bir uygulamanın özellik listesi değildir.
+Ajan görev devri, grup odaları, araç/MCP bağlayıcıları, arka plan işçileri ve çok kullanıcılı erişim henüz uygulanmadı. Planlanan işler “Sonraki aşamalar” bölümünde yer alır.
 
 ## Kavramsal mimari
 
@@ -72,7 +71,7 @@ Yönlendirme, izin ve limit kontrolleri öngörülebilir kurallarla çalışır.
 }
 ```
 
-Bu örnek bir **kavramsal sözleşmedir**; uygulama API'si henüz tanımlanmış değildir. Model kimlikleri ve araç izinleri kuruluma göre doğrulanmalıdır. Anahtarlar ve erişim belirteçleri ajan tanımına düz metin olarak yazılmamalıdır.
+Bu JSON, hedeflenen geniş ajan sözleşmesini gösterir. Uygulama API'si bugün ajan adı, açıklaması, talimatları, model sağlayıcısı ve adı, etkin durumu ve yeteneklerini yönetir; çalıştırmalar kullanılan sürümlü yapılandırmanın anlık görüntüsünü saklar. Araç kimlikleri, iletişim izinleri ve limit alanları henüz API'de uygulanmamıştır. Anahtarlar ve erişim belirteçleri ajan tanımına düz metin olarak yazılmamalıdır.
 
 Bir ajan devre dışı bırakıldığında eski konuşmaların ajan kimliği korunur. Her çalıştırma, kullanılan ajan tanımının sürümünü veya anlık görüntüsünü kaydeder; böylece geçmiş sonuçlar daha sonra açıklanabilir.
 
@@ -191,22 +190,24 @@ Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama 
 
 İstek gövdesi ve hata biçimleri için `/docs` içindeki OpenAPI arayüzünü kullanın. Gerçek model çağrısı OpenAI API kullanımı doğurur; testler bu servise bağlanmaz.
 
-## MVP kapsamı ve kabul ölçütleri
+## MVP kapsamı ve uygulama durumu
 
-| İşlev | Kabul ölçütü |
+| İşlev | Mevcut durum |
 | --- | --- |
-| Ajan yönetimi | Yeni ajan oluşturulur; düzenlenir; devre dışı bırakılır; geçmiş mesajlar okunabilir kalır. |
-| Model ve araç yapılandırması | Ajanın model ve izin verilen araçları kaydedilir; geçersiz seçimler reddedilir. |
-| Keşif | Etkin ajanlar yetenekle aranır; sonuç yoksa açık hata döner. |
-| Mesajlaşma | İki ajan arasında mesaj ve yanıt konuşma kaydında görünür. |
-| Oda | Bir konuşmaya birden fazla ajan eklenir; sıra ve durdurma kuralı uygulanır. |
-| İzlenebilirlik | Başlama, yönlendirme, araç çağrısı, hata ve bitiş olayları zaman sırasıyla görülebilir. |
+| Ajan yönetimi | API üzerinden ajan oluşturma, düzenleme ve devre dışı bırakma kullanılabilir. |
+| Model seçimi | OpenAI sağlayıcısı ve ajan başına model adı desteklenir; araç yapılandırması uygulanmadı. |
+| Yeteneğe göre keşif | Etkin ajanlar tam yetenek eşleşmesiyle aranır; tekil olmayan veya boş eşleşme açık hata verir. |
+| Ajanlar arası mesajlaşma | İki ajan arasında kimlikle veya tekil yetenek eşleşmesiyle doğrudan mesajlaşma kullanılabilir. |
+| İnsan-ajan sohbeti | Yerel tek kullanıcılı arayüzden sohbet başlatılır; konuşma geçmişi kalıcıdır. |
+| Çalıştırma izi | Durum, ajan yapılandırması anlık görüntüsü ve sıralı olaylar API'den okunabilir. |
+| Grup odası | Birden fazla ajanın aynı konuşmada koordineli çalışması planlanıyor. |
+| Görev devri | Bir ajanın alt görevi başka bir ajana aktarması planlanıyor. |
 
-İlk sürümün üzerinde çalışacağı en küçük uçtan uca senaryo: Kullanıcı iki ajan oluşturur; birine görev verir; bu ajan diğerini yeteneğine göre bulur; mesaj gönderir; yanıtı alır; kullanıcı bütün akışı ve sonucu arayüzde görür.
+Bir sonraki uçtan uca hedef: Kullanıcı Ajan A'ya sohbetten görev verir; A tek bir alt görevi yeteneğine göre seçtiği Ajan B'ye aktarır; B'nin yanıtı A'ya döner ve kullanıcı tüm çalıştırma izini görebilir.
 
 ## Sonraki aşamalar
 
-1. Görev devri, koordinatör akışı ve gelişmiş grup tartışmaları.
+1. Tek adımlı, sınırlandırılmış ajan görev devri: üst-alt görev ilişkisi, yeteneğe göre tekil hedef çözümleme, sonucun geri dönüşü ve izlenebilir çalıştırma olayları.
 2. Kalıcı kuyruk ve dağıtık işçiler; yük arttığında Redis Streams, NATS veya benzeri bir bileşen değerlendirmesi.
 3. MCP araç bağlayıcıları ve uzak ajan sistemleriyle A2A uyumluluğu.
 4. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
@@ -215,6 +216,6 @@ Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama 
 
 **Kararlar:** Ajan akışlarını çalıştırmak için LangGraph, HTTP API için FastAPI, veriye erişim için SQLAlchemy kullanılacak. Yerel kurulum SQLite ile başlar; aynı şema PostgreSQL'e de bağlanabilir. Ajan tanımları kayıt katmanında veri olarak tutulur ve ortak LangGraph akışı bunları çalıştırma anında yükler. İlk model sağlayıcısı OpenAI'dır.
 
-Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olacak. React/Next.js arayüzü sonraki adımda değerlendirilecek. İlk aşamada ayrı mesaj kuyruğu eklenmeyecek.
+Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olacak. Yerel tek kullanıcılı sohbet arayüzü mevcuttur; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir. İlk aşamada ayrı mesaj kuyruğu eklenmeyecek.
 
-Mevcut dilimler API tabanlıdır. Kullanıcı arayüzü, grup odaları, kuyrukta çalışan işler, kimlik doğrulama, MCP/A2A ve veritabanı migration yönetimi sonraki işlerin kapsamındadır.
+Mevcut dilimler API ve yerel sohbet arayüzü sunar. Grup odaları, çok kullanıcılı erişim ve kimlik doğrulama, kuyrukta çalışan işler, araç bağlayıcıları/MCP, A2A ve veritabanı migration yönetimi sonraki işlerin kapsamındadır.
