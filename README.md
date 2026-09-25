@@ -1,6 +1,6 @@
 # Agent Runtime Platform
 
-> **Durum:** İlk çalışan API dilimi eklendi. Ajanları kaydedip iki ajan arasında izlenebilir doğrudan mesaj çalıştırabilirsiniz.
+> **Durum:** Ajanlar arası mesajlaşma, yeteneğe göre keşif ve yerel insan-ajan sohbeti kullanılabilir.
 
 Agent Runtime Platform, yapay zekâ ajanlarını çalışma anında tanımlayıp yönetmek, yeteneklerine göre bulmak ve birbirleriyle izlenebilir biçimde konuşturmak için tasarlanan bir platformdur. Yeni bir ajan eklemek veya devre dışı bırakmak, her seferinde uygulama kodunu değiştirmeyi gerektirmemelidir.
 
@@ -167,6 +167,8 @@ API belgeleri `http://127.0.0.1:8000/docs` adresinde açılır. Kontrolleri çal
 uv run pytest
 ```
 
+Tarayıcı sohbetini `http://127.0.0.1:8000/` adresinden açın. İlk ajanı oluşturmak için soldaki formda OpenAI model kimliği ve talimatları girin; ardından ajanla mesajlaşabilirsiniz. Sohbet geçmişi veritabanında tutulur ve sayfa yenilendiğinde yüklenir.
+
 PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `postgresql+psycopg://user:password@localhost:5432/agent_runtime` olarak ayarlayın.
 
 ### API akışı
@@ -178,6 +180,14 @@ PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `pos
 5. Yanıttaki çalıştırma kimliğiyle `GET /runs/{run_id}` üzerinden mesajları, durum bilgisini ve olay izini okuyun. Konuşmanın tamamı `GET /conversations/{conversation_id}` üzerinden alınabilir.
 
 `PATCH /agents/{agent_id}` ajan ayarlarını, yeteneklerini değiştirir veya `{"enabled": false}` ile yeni çalıştırmalarda kullanılmasını engeller. Her değişiklik ajan sürümünü artırır. Çalışan her görev, başlangıçta kullandığı talimat/model/yetenek anlık görüntüsünü saklar; çalıştırma API'si talimat içeriğini döndürmez.
+
+### İnsan-ajan sohbet API'si
+
+- `POST /chat/conversations` gövdesi `{"agent_id": "..."}` ile tek ajanlı bir sohbet başlatır.
+- `POST /chat/conversations/{conversation_id}/messages` gövdesi `{"content": "..."}` ile kullanıcı mesajını gönderir.
+- `GET /conversations/{conversation_id}` sohbet geçmişini, `GET /runs/{run_id}` son yanıtın çalıştırma izini döndürür.
+
+Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama ve çok kullanıcılı erişim bu dilimde yoktur.
 
 İstek gövdesi ve hata biçimleri için `/docs` içindeki OpenAPI arayüzünü kullanın. Gerçek model çağrısı OpenAI API kullanımı doğurur; testler bu servise bağlanmaz.
 

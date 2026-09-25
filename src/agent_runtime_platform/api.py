@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Response, status
+from fastapi.responses import FileResponse
 
 from agent_runtime_platform.database import Database
 from agent_runtime_platform.providers import ProviderRegistry
@@ -18,7 +20,14 @@ from agent_runtime_platform.runtime import (
     InvalidMessageError,
     RunExecutionFailed,
 )
-from agent_runtime_platform.schemas import AgentCreate, AgentUpdate, ConversationCreate, MessageCreate
+from agent_runtime_platform.schemas import (
+    AgentCreate,
+    AgentUpdate,
+    ConversationCreate,
+    HumanChatCreate,
+    HumanChatMessageCreate,
+    MessageCreate,
+)
 
 
 def create_app(
@@ -31,10 +40,14 @@ def create_app(
     app = FastAPI(
         title="Agent Runtime Platform API",
         version="0.1.0",
-        description="Register agents and run a traceable direct message between them.",
+        description="Register agents, discover them by capability, and run traceable human or agent conversations.",
     )
     app.state.database = database
     app.state.runtime = runtime
+
+    @app.get("/", include_in_schema=False)
+    def chat_ui() -> FileResponse:
+        return FileResponse(Path(__file__).parent / "static" / "index.html")
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -80,6 +93,39 @@ def create_app(
         if conversation is None:
             raise HTTPException(status_code=404, detail="Conversation not found.")
         return conversation
+
+    @app.post("/chat/conversations", status_code=status.HTTP_201_CREATED)
+    def create_human_chat(request: HumanChatCreate) -> dict:
+        try:
+            return runtime.create_human_chat_conversation(request.agent_id)
+        except AgentNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Agent not found.") from exc
+        except AgentDisabledError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/chat/conversations/{conversation_id}/messages", status_code=status.HTTP_201_CREATED)
+    def send_human_chat_message(
+        conversation_id: str,
+        request: HumanChatMessageCreate,
+        response: Response,
+    ) -> dict:
+        try:
+            result = runtime.send_human_message(conversation_id, request.content)
+            response.headers["Location"] = f"/runs/{result['id']}"
+            return result
+        except ConversationNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Conversation not found.") from exc
+        except ConversationConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except AgentNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Agent not found.") from exc
+        except AgentDisabledError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RunExecutionFailed as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"error": "run_failed", "run_id": exc.run_id},
+            ) from exc
 
     @app.post("/conversations/{conversation_id}/messages", status_code=status.HTTP_201_CREATED)
     def send_message(conversation_id: str, request: MessageCreate, response: Response) -> dict:
