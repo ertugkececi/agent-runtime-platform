@@ -13,6 +13,10 @@ from agent_runtime_platform.models import (
     AgentCapability,
     Conversation,
     ConversationMember,
+    HumanChatMessage,
+    HumanChatRun,
+    HumanChatRunEvent,
+    HumanChatSession,
     Message,
     Run,
     RunEvent,
@@ -108,8 +112,28 @@ def _message_payload(message: Message) -> dict[str, Any]:
         "run_id": message.run_id,
         "conversation_id": message.conversation_id,
         "sequence": message.sequence,
+        "sender_type": "agent",
         "sender_agent_id": message.sender_agent_id,
         "recipient_agent_id": message.recipient_agent_id,
+        "content": message.content,
+        "kind": message.kind,
+        "created_at": message.created_at.isoformat(),
+    }
+
+
+def _human_chat_message_payload(
+    message: HumanChatMessage,
+    target_agent_id: str,
+) -> dict[str, Any]:
+    is_user = message.sender_type == "user"
+    return {
+        "id": message.id,
+        "run_id": message.run_id,
+        "conversation_id": message.conversation_id,
+        "sequence": message.sequence,
+        "sender_type": message.sender_type,
+        "sender_agent_id": message.agent_id if not is_user else None,
+        "recipient_agent_id": target_agent_id if is_user else None,
         "content": message.content,
         "kind": message.kind,
         "created_at": message.created_at.isoformat(),
@@ -120,6 +144,23 @@ def _append_event(session: Session, run: Run, event_type: str, payload: dict[str
     run.next_event_sequence += 1
     session.add(
         RunEvent(
+            run_id=run.id,
+            sequence=run.next_event_sequence,
+            event_type=event_type,
+            payload=payload,
+        )
+    )
+
+
+def _append_human_chat_event(
+    session: Session,
+    run: HumanChatRun,
+    event_type: str,
+    payload: dict[str, Any],
+) -> None:
+    run.next_event_sequence += 1
+    session.add(
+        HumanChatRunEvent(
             run_id=run.id,
             sequence=run.next_event_sequence,
             event_type=event_type,
@@ -215,6 +256,22 @@ class AgentRuntimeService:
             session.commit()
             return self._conversation_payload(session, conversation)
 
+    def create_human_chat_conversation(self, agent_id: str) -> dict[str, Any]:
+        with self.database.session() as session:
+            agent = session.get(Agent, agent_id)
+            if agent is None:
+                raise AgentNotFoundError(agent_id)
+            if not agent.enabled:
+                raise AgentDisabledError("Disabled agents cannot start a new chat.")
+
+            conversation = Conversation(status="open")
+            session.add(conversation)
+            session.flush()
+            session.add(ConversationMember(conversation_id=conversation.id, agent_id=agent.id))
+            session.add(HumanChatSession(conversation_id=conversation.id, agent_id=agent.id))
+            session.commit()
+            return self._conversation_payload(session, conversation)
+
     def get_conversation(self, conversation_id: str) -> dict[str, Any] | None:
         with self.database.session() as session:
             conversation = session.get(Conversation, conversation_id)
@@ -233,11 +290,26 @@ class AgentRuntimeService:
             .where(Message.conversation_id == conversation.id)
             .order_by(Message.sequence)
         ).all()
+        chat_session = session.get(HumanChatSession, conversation.id)
+        chat_messages = []
+        if chat_session is not None:
+            chat_messages = session.scalars(
+                select(HumanChatMessage)
+                .where(HumanChatMessage.conversation_id == conversation.id)
+                .order_by(HumanChatMessage.sequence)
+            ).all()
+        message_payloads = [_message_payload(message) for message in messages]
+        if chat_session is not None:
+            message_payloads.extend(
+                _human_chat_message_payload(message, chat_session.agent_id)
+                for message in chat_messages
+            )
+        message_payloads.sort(key=lambda message: message["sequence"])
         return {
             "id": conversation.id,
             "status": conversation.status,
             "agent_ids": list(agent_ids),
-            "messages": [_message_payload(message) for message in messages],
+            "messages": message_payloads,
             "created_at": conversation.created_at.isoformat(),
         }
 
@@ -358,30 +430,118 @@ class AgentRuntimeService:
             raise RunExecutionFailed(run_id)
         return result
 
+    def send_human_message(self, conversation_id: str, content: str) -> dict[str, Any]:
+        run_id = new_id()
+        with self.database.session() as session:
+            conversation = session.get(Conversation, conversation_id)
+            if conversation is None:
+                raise ConversationNotFoundError(conversation_id)
+            if conversation.status != "open":
+                raise ConversationConflictError("The conversation is not open.")
+
+            chat_session = session.get(HumanChatSession, conversation_id)
+            if chat_session is None:
+                raise ConversationConflictError("This conversation is not a human-agent chat.")
+            target = session.get(Agent, chat_session.agent_id)
+            if target is None:
+                raise AgentNotFoundError(chat_session.agent_id)
+            if not target.enabled:
+                raise AgentDisabledError("Disabled agents cannot receive new chat messages.")
+
+            run = HumanChatRun(
+                id=run_id,
+                conversation_id=conversation_id,
+                target_agent_id=target.id,
+                target_config_snapshot=_agent_snapshot(target),
+                status="running",
+            )
+            session.add(run)
+            session.flush()
+
+            conversation.next_message_sequence += 1
+            message = HumanChatMessage(
+                id=new_id(),
+                run_id=run_id,
+                conversation_id=conversation_id,
+                sequence=conversation.next_message_sequence,
+                sender_type="user",
+                agent_id=None,
+                content=content,
+                kind="user_message",
+            )
+            session.add(message)
+            _append_human_chat_event(
+                session,
+                run,
+                "run_started",
+                {"conversation_id": conversation_id, "agent_id": target.id},
+            )
+            _append_human_chat_event(
+                session,
+                run,
+                "user_message_received",
+                {"message_id": message.id, "agent_id": target.id},
+            )
+            session.commit()
+
+        try:
+            self.graph.invoke({"run_id": run_id})
+        except Exception as exc:
+            self._mark_run_failed(run_id, exc)
+            raise RunExecutionFailed(run_id) from exc
+
+        result = self.get_run(run_id)
+        if result is None:
+            raise RunExecutionFailed(run_id)
+        return result
+
     def _prepare_context(self, state: MessagingState) -> dict[str, Any]:
         with self.database.session() as session:
             run = session.get(Run, state["run_id"])
-            if run is None:
-                raise RuntimeError("Run disappeared before model execution.")
-            target_id = run.target_agent_id
-            messages = session.scalars(
-                select(Message)
-                .where(Message.conversation_id == run.conversation_id)
-                .order_by(Message.sequence)
-            ).all()
-            history: list[dict[str, str]] = []
-            for message in messages:
-                if message.sender_agent_id == target_id:
-                    history.append({"role": "assistant", "content": message.content})
-                elif message.recipient_agent_id == target_id:
-                    history.append({"role": "user", "content": message.content})
-            _append_event(
-                session,
-                run,
-                "agent_invocation_started",
-                {"agent_id": target_id, "agent_version": run.target_config_snapshot["version"]},
-            )
-            target_config = run.target_config_snapshot
+            if run is not None:
+                target_id = run.target_agent_id
+                messages = session.scalars(
+                    select(Message)
+                    .where(Message.conversation_id == run.conversation_id)
+                    .order_by(Message.sequence)
+                ).all()
+                history: list[dict[str, str]] = []
+                for message in messages:
+                    if message.sender_agent_id == target_id:
+                        history.append({"role": "assistant", "content": message.content})
+                    elif message.recipient_agent_id == target_id:
+                        history.append({"role": "user", "content": message.content})
+                target_config = run.target_config_snapshot
+                _append_event(
+                    session,
+                    run,
+                    "agent_invocation_started",
+                    {"agent_id": target_id, "agent_version": target_config["version"]},
+                )
+            else:
+                chat_run = session.get(HumanChatRun, state["run_id"])
+                if chat_run is None:
+                    raise RuntimeError("Run disappeared before model execution.")
+                target_id = chat_run.target_agent_id
+                messages = session.scalars(
+                    select(HumanChatMessage)
+                    .where(HumanChatMessage.conversation_id == chat_run.conversation_id)
+                    .order_by(HumanChatMessage.sequence)
+                ).all()
+                history = [
+                    {
+                        "role": "user" if message.sender_type == "user" else "assistant",
+                        "content": message.content,
+                    }
+                    for message in messages
+                ]
+                target_config = chat_run.target_config_snapshot
+                _append_human_chat_event(
+                    session,
+                    chat_run,
+                    "agent_invocation_started",
+                    {"agent_id": target_id, "agent_version": target_config["version"]},
+                )
             session.commit()
             return {"target_config": target_config, "history": history}
 
@@ -389,19 +549,19 @@ class AgentRuntimeService:
         target_config = state["target_config"]
         history = state["history"]
         with self.database.session() as session:
+            payload = {
+                "agent_id": target_config["id"],
+                "provider": target_config["model_provider"],
+                "model": target_config["model_name"],
+            }
             run = session.get(Run, state["run_id"])
-            if run is None:
-                raise RuntimeError("Run disappeared before model invocation.")
-            _append_event(
-                session,
-                run,
-                "model_call_started",
-                {
-                    "agent_id": target_config["id"],
-                    "provider": target_config["model_provider"],
-                    "model": target_config["model_name"],
-                },
-            )
+            if run is not None:
+                _append_event(session, run, "model_call_started", payload)
+            else:
+                chat_run = session.get(HumanChatRun, state["run_id"])
+                if chat_run is None:
+                    raise RuntimeError("Run disappeared before model invocation.")
+                _append_human_chat_event(session, chat_run, "model_call_started", payload)
             session.commit()
 
         reply = self.providers.generate(target_config, history)
@@ -410,78 +570,162 @@ class AgentRuntimeService:
 
         with self.database.session() as session:
             run = session.get(Run, state["run_id"])
-            if run is None:
-                raise RuntimeError("Run disappeared after model invocation.")
-            _append_event(session, run, "model_call_completed", {"agent_id": target_config["id"]})
+            payload = {"agent_id": target_config["id"]}
+            if run is not None:
+                _append_event(session, run, "model_call_completed", payload)
+            else:
+                chat_run = session.get(HumanChatRun, state["run_id"])
+                if chat_run is None:
+                    raise RuntimeError("Run disappeared after model invocation.")
+                _append_human_chat_event(session, chat_run, "model_call_completed", payload)
             session.commit()
         return {"reply": reply.strip()}
 
     def _persist_response(self, state: MessagingState) -> dict[str, str]:
         with self.database.session() as session:
             run = session.get(Run, state["run_id"])
-            if run is None:
+            chat_run = None if run is not None else session.get(HumanChatRun, state["run_id"])
+            if run is None and chat_run is None:
                 raise RuntimeError("Run disappeared before response persistence.")
-            conversation = session.get(Conversation, run.conversation_id)
+            conversation_id = run.conversation_id if run is not None else chat_run.conversation_id
+            conversation = session.get(Conversation, conversation_id)
             if conversation is None:
                 raise RuntimeError("Conversation disappeared before response persistence.")
             conversation.next_message_sequence += 1
-            response = Message(
-                id=new_id(),
-                run_id=run.id,
-                conversation_id=run.conversation_id,
-                sequence=conversation.next_message_sequence,
-                sender_agent_id=run.target_agent_id,
-                recipient_agent_id=run.source_agent_id,
-                content=state["reply"],
-                kind="agent_response",
-            )
-            session.add(response)
-            run.status = "completed"
-            run.completed_at = datetime.now(timezone.utc)
-            _append_event(session, run, "agent_response_saved", {"message_id": response.id})
-            _append_event(session, run, "run_completed", {"status": run.status})
+            if run is not None:
+                response = Message(
+                    id=new_id(),
+                    run_id=run.id,
+                    conversation_id=run.conversation_id,
+                    sequence=conversation.next_message_sequence,
+                    sender_agent_id=run.target_agent_id,
+                    recipient_agent_id=run.source_agent_id,
+                    content=state["reply"],
+                    kind="agent_response",
+                )
+                session.add(response)
+                run.status = "completed"
+                run.completed_at = datetime.now(timezone.utc)
+                _append_event(session, run, "agent_response_saved", {"message_id": response.id})
+                _append_event(session, run, "run_completed", {"status": run.status})
+            else:
+                response = HumanChatMessage(
+                    id=new_id(),
+                    run_id=chat_run.id,
+                    conversation_id=chat_run.conversation_id,
+                    sequence=conversation.next_message_sequence,
+                    sender_type="agent",
+                    agent_id=chat_run.target_agent_id,
+                    content=state["reply"],
+                    kind="agent_response",
+                )
+                session.add(response)
+                chat_run.status = "completed"
+                chat_run.completed_at = datetime.now(timezone.utc)
+                _append_human_chat_event(
+                    session,
+                    chat_run,
+                    "agent_response_saved",
+                    {"message_id": response.id},
+                )
+                _append_human_chat_event(
+                    session,
+                    chat_run,
+                    "run_completed",
+                    {"status": chat_run.status},
+                )
             session.commit()
             return {}
 
     def _mark_run_failed(self, run_id: str, error: Exception) -> None:
         with self.database.session() as session:
             run = session.get(Run, run_id)
-            if run is None or run.status != "running":
-                return
-            run.status = "failed"
-            run.completed_at = datetime.now(timezone.utc)
-            run.error_code = "provider_error" if isinstance(error, ProviderError) else "runtime_error"
-            _append_event(
-                session,
-                run,
-                "run_failed",
-                {"error_code": run.error_code},
-            )
+            if run is not None:
+                if run.status != "running":
+                    return
+                run.status = "failed"
+                run.completed_at = datetime.now(timezone.utc)
+                run.error_code = "provider_error" if isinstance(error, ProviderError) else "runtime_error"
+                _append_event(session, run, "run_failed", {"error_code": run.error_code})
+            else:
+                chat_run = session.get(HumanChatRun, run_id)
+                if chat_run is None or chat_run.status != "running":
+                    return
+                chat_run.status = "failed"
+                chat_run.completed_at = datetime.now(timezone.utc)
+                chat_run.error_code = "provider_error" if isinstance(error, ProviderError) else "runtime_error"
+                _append_human_chat_event(
+                    session,
+                    chat_run,
+                    "run_failed",
+                    {"error_code": chat_run.error_code},
+                )
             session.commit()
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.database.session() as session:
             run = session.get(Run, run_id)
-            if run is None:
+            if run is not None:
+                events = session.scalars(
+                    select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.sequence)
+                ).all()
+                messages = session.scalars(
+                    select(Message).where(Message.run_id == run_id).order_by(Message.sequence)
+                ).all()
+                return {
+                    "id": run.id,
+                    "conversation_id": run.conversation_id,
+                    "source_agent_id": run.source_agent_id,
+                    "target_agent_id": run.target_agent_id,
+                    "agent_snapshots": {
+                        "source": _public_snapshot(run.source_config_snapshot),
+                        "target": _public_snapshot(run.target_config_snapshot),
+                    },
+                    "status": run.status,
+                    "error_code": run.error_code,
+                    "messages": [_message_payload(message) for message in messages],
+                    "events": [
+                        {
+                            "sequence": event.sequence,
+                            "type": event.event_type,
+                            "payload": event.payload,
+                            "created_at": event.created_at.isoformat(),
+                        }
+                        for event in events
+                    ],
+                    "started_at": run.started_at.isoformat(),
+                    "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                }
+
+            chat_run = session.get(HumanChatRun, run_id)
+            if chat_run is None:
                 return None
             events = session.scalars(
-                select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.sequence)
+                select(HumanChatRunEvent)
+                .where(HumanChatRunEvent.run_id == run_id)
+                .order_by(HumanChatRunEvent.sequence)
             ).all()
             messages = session.scalars(
-                select(Message).where(Message.run_id == run_id).order_by(Message.sequence)
+                select(HumanChatMessage)
+                .where(HumanChatMessage.run_id == run_id)
+                .order_by(HumanChatMessage.sequence)
             ).all()
             return {
-                "id": run.id,
-                "conversation_id": run.conversation_id,
-                "source_agent_id": run.source_agent_id,
-                "target_agent_id": run.target_agent_id,
+                "id": chat_run.id,
+                "conversation_id": chat_run.conversation_id,
+                "source_agent_id": None,
+                "source_type": "user",
+                "target_agent_id": chat_run.target_agent_id,
                 "agent_snapshots": {
-                    "source": _public_snapshot(run.source_config_snapshot),
-                    "target": _public_snapshot(run.target_config_snapshot),
+                    "source": None,
+                    "target": _public_snapshot(chat_run.target_config_snapshot),
                 },
-                "status": run.status,
-                "error_code": run.error_code,
-                "messages": [_message_payload(message) for message in messages],
+                "status": chat_run.status,
+                "error_code": chat_run.error_code,
+                "messages": [
+                    _human_chat_message_payload(message, chat_run.target_agent_id)
+                    for message in messages
+                ],
                 "events": [
                     {
                         "sequence": event.sequence,
@@ -491,6 +735,6 @@ class AgentRuntimeService:
                     }
                     for event in events
                 ],
-                "started_at": run.started_at.isoformat(),
-                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                "started_at": chat_run.started_at.isoformat(),
+                "completed_at": chat_run.completed_at.isoformat() if chat_run.completed_at else None,
             }

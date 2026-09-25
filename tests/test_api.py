@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from agent_runtime_platform.api import create_app
-from agent_runtime_platform.models import Run
+from agent_runtime_platform.models import HumanChatRun, Run
 from agent_runtime_platform.providers import ProviderError, ProviderRegistry
 
 
@@ -59,6 +59,11 @@ def create_agent(
 def count_runs(client: TestClient) -> int:
     with client.app.state.database.session() as session:
         return session.scalar(select(func.count()).select_from(Run)) or 0
+
+
+def count_human_chat_runs(client: TestClient) -> int:
+    with client.app.state.database.session() as session:
+        return session.scalar(select(func.count()).select_from(HumanChatRun)) or 0
 
 
 def create_conversation(client: TestClient, first_id: str, second_id: str) -> str:
@@ -270,3 +275,144 @@ def test_provider_errors_leave_a_failed_run_and_trace(client_and_provider):
     assert run["error_code"] == "provider_error"
     assert run["messages"][0]["kind"] == "agent_message"
     assert [event["type"] for event in run["events"]][-1] == "run_failed"
+
+
+def test_human_can_chat_with_an_agent_and_reload_the_persisted_trace(client_and_provider):
+    client, provider = client_and_provider
+    agent = create_agent(client, "Assistant", "model-human", capabilities=["research"])
+    conversation_response = client.post("/chat/conversations", json={"agent_id": agent["id"]})
+    assert conversation_response.status_code == 201, conversation_response.text
+    conversation_id = conversation_response.json()["id"]
+
+    response = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "Summarize the proposal."},
+    )
+
+    assert response.status_code == 201, response.text
+    run = response.json()
+    assert run["status"] == "completed"
+    assert run["source_type"] == "user"
+    assert run["source_agent_id"] is None
+    assert run["target_agent_id"] == agent["id"]
+    assert run["agent_snapshots"]["target"]["capabilities"] == ["research"]
+    assert [message["sender_type"] for message in run["messages"]] == ["user", "agent"]
+    assert [event["type"] for event in run["events"]] == [
+        "run_started",
+        "user_message_received",
+        "agent_invocation_started",
+        "model_call_started",
+        "model_call_completed",
+        "agent_response_saved",
+        "run_completed",
+    ]
+    assert provider.calls[-1]["history"] == [
+        {"role": "user", "content": "Summarize the proposal."}
+    ]
+
+    conversation = client.get(f"/conversations/{conversation_id}").json()
+    assert [message["sequence"] for message in conversation["messages"]] == [1, 2]
+    assert [message["sender_type"] for message in conversation["messages"]] == ["user", "agent"]
+    assert client.get(f"/runs/{run['id']}").json()["status"] == "completed"
+
+
+def test_human_chat_sends_prior_turns_as_conversation_context(client_and_provider):
+    client, provider = client_and_provider
+    agent = create_agent(client, "Assistant", "model-human")
+    conversation_id = client.post("/chat/conversations", json={"agent_id": agent["id"]}).json()["id"]
+
+    first = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "My project is called Atlas."},
+    )
+    second = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "What is the project called?"},
+    )
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert provider.calls[-1]["history"] == [
+        {"role": "user", "content": "My project is called Atlas."},
+        {"role": "assistant", "content": "Reply from Assistant"},
+        {"role": "user", "content": "What is the project called?"},
+    ]
+    conversation = client.get(f"/conversations/{conversation_id}").json()
+    assert [message["sequence"] for message in conversation["messages"]] == [1, 2, 3, 4]
+
+
+def test_human_chat_uses_current_agent_version_at_each_run(client_and_provider):
+    client, provider = client_and_provider
+    agent = create_agent(client, "Assistant", "model-v1")
+    conversation_id = client.post("/chat/conversations", json={"agent_id": agent["id"]}).json()["id"]
+    first = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "First turn."},
+    )
+    assert first.status_code == 201, first.text
+
+    update = client.patch(
+        f"/agents/{agent['id']}",
+        json={"model_name": "model-v2", "instructions": "Use updated instructions."},
+    )
+    assert update.status_code == 200
+
+    second = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "Second turn."},
+    )
+
+    assert second.status_code == 201, second.text
+    assert first.json()["agent_snapshots"]["target"]["version"] == 1
+    assert second.json()["agent_snapshots"]["target"]["version"] == 2
+    assert provider.calls[-1]["agent"]["model_name"] == "model-v2"
+    assert provider.calls[-1]["agent"]["instructions"] == "Use updated instructions."
+
+
+def test_disabled_agent_cannot_start_or_continue_a_human_chat(client_and_provider):
+    client, _provider = client_and_provider
+    agent = create_agent(client, "Assistant", "model-human")
+    conversation_id = client.post("/chat/conversations", json={"agent_id": agent["id"]}).json()["id"]
+    assert client.patch(f"/agents/{agent['id']}", json={"enabled": False}).status_code == 200
+
+    response = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "This should not run."},
+    )
+    create_disabled = client.post("/chat/conversations", json={"agent_id": agent["id"]})
+
+    assert response.status_code == 409
+    assert create_disabled.status_code == 409
+    assert client.get(f"/conversations/{conversation_id}").json()["messages"] == []
+    assert count_human_chat_runs(client) == 0
+
+
+def test_human_chat_provider_error_persists_a_failed_run_and_trace(client_and_provider):
+    client, provider = client_and_provider
+    agent = create_agent(client, "Assistant", "model-human")
+    conversation_id = client.post("/chat/conversations", json={"agent_id": agent["id"]}).json()["id"]
+    provider.fail = True
+
+    response = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "Please respond."},
+    )
+
+    assert response.status_code == 502
+    run_id = response.json()["detail"]["run_id"]
+    run = client.get(f"/runs/{run_id}").json()
+    assert run["status"] == "failed"
+    assert run["error_code"] == "provider_error"
+    assert run["messages"][0]["sender_type"] == "user"
+    assert [event["type"] for event in run["events"]][-1] == "run_failed"
+
+
+def test_browser_chat_page_is_served_by_the_app(client_and_provider):
+    client, _provider = client_and_provider
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Yeni ajan oluştur" in response.text
+    assert "Gönder" in response.text

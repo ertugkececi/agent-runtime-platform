@@ -27,6 +27,9 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_runtime_platform"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/agent_runtime_platform/static/index.html" = "agent_runtime_platform/static/index.html"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

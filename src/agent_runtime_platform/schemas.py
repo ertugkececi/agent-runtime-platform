@@ -120,3 +120,19 @@ class MessageCreate(BaseModel):
         if not value:
             raise ValueError("Message content cannot be blank")
         return value
+
+
+class HumanChatCreate(BaseModel):
+    agent_id: str = Field(min_length=1)
+
+
+class HumanChatMessageCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=20_000)
+
+    @field_validator("content")
+    @classmethod
+    def strip_content(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Message content cannot be blank")
+        return value
