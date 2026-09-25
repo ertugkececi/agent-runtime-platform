@@ -158,6 +158,8 @@ Gerçek şema, gereksinimler ve ilk uygulama sırasında belirlenecek. Bir ajan�
 
 ## Teknoloji yönü
 
-Başlangıç için React/Next.js arayüz, FastAPI servis, PostgreSQL kayıt katmanı ve değiştirilebilir model sağlayıcı arayüzü makul adaylardır. İlk aşamada ayrı bir mesaj kuyruğu gerekmeyebilir; işlem hacmi ve güvenilir teslimat gereksinimi ölçüldükten sonra seçilmelidir. Bunlar **öneridir**, kesinleşmiş mimari karar veya mevcut kurulum değildir.
+**Karar:** Ajan akışlarını çalıştırmak için LangGraph kullanılacak. Ajan tanımları ve yetenekleri kayıt katmanında veri olarak tutulacak; ortak bir LangGraph akışı çalıştırma anında bu tanımları yükleyecek. Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olacak.
+
+React/Next.js arayüz, FastAPI servis ve PostgreSQL kayıt katmanı başlangıç için önerilen adaylardır; uygulama iskeleti kurulurken kesinleştirilecek. İlk aşamada ayrı bir mesaj kuyruğu eklenmeyecek; ihtiyaç yük ve teslimat gereksinimleriyle ölçüldükten sonra değerlendirilecek.
 
 Bu repo şu anda ürün tanımını barındırır. Kod, kurulum komutları, lisans ve çalışma garantisi henüz yoktur.
