@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -7,19 +8,34 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from agent_runtime_platform.api import create_app
-from agent_runtime_platform.models import HumanChatRun, Run
-from agent_runtime_platform.providers import ProviderError, ProviderRegistry
+from agent_runtime_platform.models import HumanChatRun, Run, Task
+from agent_runtime_platform.providers import (
+    HandoffRequest,
+    OpenAIChatProvider,
+    ProviderError,
+    ProviderRegistry,
+)
 
 
 class FakeProvider:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.outputs: list[str | HandoffRequest] = []
+        self.fail_for_agents: set[str] = set()
         self.fail = False
 
-    def generate(self, agent: dict[str, Any], history: list[dict[str, str]]) -> str:
-        if self.fail:
+    def generate(
+        self,
+        agent: dict[str, Any],
+        history: list[dict[str, str]],
+        *,
+        allow_handoff: bool = False,
+    ) -> str | HandoffRequest:
+        self.calls.append({"agent": agent, "history": history, "allow_handoff": allow_handoff})
+        if self.fail or agent["id"] in self.fail_for_agents:
             raise ProviderError("simulated provider failure")
-        self.calls.append({"agent": agent, "history": history})
+        if self.outputs:
+            return self.outputs.pop(0)
         return f"Reply from {agent['name']}"
 
 
@@ -64,6 +80,11 @@ def count_runs(client: TestClient) -> int:
 def count_human_chat_runs(client: TestClient) -> int:
     with client.app.state.database.session() as session:
         return session.scalar(select(func.count()).select_from(HumanChatRun)) or 0
+
+
+def count_tasks(client: TestClient) -> int:
+    with client.app.state.database.session() as session:
+        return session.scalar(select(func.count()).select_from(Task)) or 0
 
 
 def create_conversation(client: TestClient, first_id: str, second_id: str) -> str:
@@ -416,3 +437,233 @@ def test_browser_chat_page_is_served_by_the_app(client_and_provider):
     assert response.headers["content-type"].startswith("text/html")
     assert "Yeni ajan oluştur" in response.text
     assert "Gönder" in response.text
+
+
+def test_human_chat_can_delegate_one_task_and_return_the_result_to_the_parent(client_and_provider):
+    client, provider = client_and_provider
+    parent = create_agent(client, "Coordinator", "model-parent")
+    helper = create_agent(client, "Researcher", "model-helper", capabilities=["research"])
+    conversation_id = client.post("/chat/conversations", json={"agent_id": parent["id"]}).json()["id"]
+    provider.outputs = [
+        HandoffRequest(capability=" Research ", task="Find the two key risks."),
+        "Two risks: data quality and access control.",
+        "The main risks are data quality and access control.",
+    ]
+
+    response = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "Assess the rollout risks."},
+    )
+
+    assert response.status_code == 201, response.text
+    run = response.json()
+    assert run["status"] == "completed"
+    assert [message["sender_type"] for message in run["messages"]] == ["user", "agent"]
+    assert run["messages"][-1]["content"] == "The main risks are data quality and access control."
+    tasks = run["tasks"]
+    assert len(tasks) == 2
+    root_task, child_task = tasks
+    assert root_task["parent_task_id"] is None
+    assert root_task["objective"] == "Assess the rollout risks."
+    assert root_task["status"] == "completed"
+    assert root_task["result"] == run["messages"][-1]["content"]
+    assert child_task["parent_task_id"] == root_task["id"]
+    assert child_task["agent_id"] == helper["id"]
+    assert child_task["capability"] == "research"
+    assert child_task["objective"] == "Find the two key risks."
+    assert child_task["agent_snapshot"]["version"] == 1
+    assert child_task["status"] == "completed"
+    assert child_task["result"] == "Two risks: data quality and access control."
+    assert [call["agent"]["id"] for call in provider.calls] == [parent["id"], helper["id"], parent["id"]]
+    assert [call["allow_handoff"] for call in provider.calls] == [True, False, False]
+    assert provider.calls[1]["history"] == [
+        {"role": "user", "content": "Find the two key risks."}
+    ]
+    assert "Two risks: data quality and access control." in provider.calls[2]["history"][-1]["content"]
+    event_types = [event["type"] for event in run["events"]]
+    assert event_types.index("handoff_requested") < event_types.index("handoff_target_resolved")
+    assert event_types.index("delegated_task_started") < event_types.index("delegated_task_completed")
+    assert event_types.index("delegated_task_completed") < event_types.index("handoff_result_returned")
+    assert event_types[-2:] == ["agent_response_saved", "run_completed"]
+    assert helper["id"] in client.get(f"/conversations/{conversation_id}").json()["agent_ids"]
+
+
+def test_handoff_with_only_disabled_matches_is_inspectable_and_creates_no_child_task(client_and_provider):
+    client, provider = client_and_provider
+    parent = create_agent(client, "Coordinator", "model-parent")
+    helper = create_agent(client, "Researcher", "model-helper", capabilities=["research"])
+    assert client.patch(f"/agents/{helper['id']}", json={"enabled": False}).status_code == 200
+    conversation_id = client.post("/chat/conversations", json={"agent_id": parent["id"]}).json()["id"]
+    provider.outputs = [
+        HandoffRequest(capability="research", task="Find supporting evidence."),
+        "I could not find an enabled researcher, so here is a limited answer.",
+    ]
+
+    response = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "Review the evidence."},
+    )
+
+    assert response.status_code == 201, response.text
+    run = response.json()
+    assert run["status"] == "completed"
+    assert len(run["tasks"]) == 1
+    rejected = next(event for event in run["events"] if event["type"] == "handoff_rejected")
+    assert rejected["payload"]["reason"] == "no_enabled_match"
+    assert rejected["payload"]["disabled_match_count"] == 1
+    assert "no child task was started" in provider.calls[-1]["history"][-1]["content"]
+
+
+def test_ambiguous_handoff_creates_no_child_task_and_parent_can_finish(client_and_provider):
+    client, provider = client_and_provider
+    parent = create_agent(client, "Coordinator", "model-parent")
+    create_agent(client, "Researcher A", "model-helper-a", capabilities=["research"])
+    create_agent(client, "Researcher B", "model-helper-b", capabilities=["research"])
+    conversation_id = client.post("/chat/conversations", json={"agent_id": parent["id"]}).json()["id"]
+    provider.outputs = [
+        HandoffRequest(capability="research", task="Find supporting evidence."),
+        "The request is answerable without delegation.",
+    ]
+
+    response = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "Review the evidence."},
+    )
+
+    assert response.status_code == 201, response.text
+    run = response.json()
+    assert run["status"] == "completed"
+    assert len(run["tasks"]) == 1
+    rejected = next(event for event in run["events"] if event["type"] == "handoff_rejected")
+    assert rejected["payload"]["reason"] == "ambiguous_match"
+    assert rejected["payload"]["candidate_count"] == 2
+
+
+def test_delegated_provider_error_is_recorded_and_parent_returns_a_safe_answer(client_and_provider):
+    client, provider = client_and_provider
+    parent = create_agent(client, "Coordinator", "model-parent")
+    helper = create_agent(client, "Researcher", "model-helper", capabilities=["research"])
+    conversation_id = client.post("/chat/conversations", json={"agent_id": parent["id"]}).json()["id"]
+    provider.outputs = [
+        HandoffRequest(capability="research", task="Find supporting evidence."),
+        "I could not complete the delegated lookup, so I cannot verify the source.",
+    ]
+    provider.fail_for_agents.add(helper["id"])
+
+    response = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "Review the evidence."},
+    )
+
+    assert response.status_code == 201, response.text
+    run = response.json()
+    assert run["status"] == "completed"
+    child_task = next(task for task in run["tasks"] if task["parent_task_id"] is not None)
+    assert child_task["status"] == "failed"
+    assert child_task["error_code"] == "provider_error"
+    assert child_task["result"] is None
+    failure = next(event for event in run["events"] if event["type"] == "delegated_task_failed")
+    assert failure["payload"] == {"task_id": child_task["id"], "error_code": "provider_error"}
+    assert run["messages"][-1]["content"] == "I could not complete the delegated lookup, so I cannot verify the source."
+
+
+def test_delegated_agent_cannot_start_a_recursive_handoff(client_and_provider):
+    client, provider = client_and_provider
+    parent = create_agent(client, "Coordinator", "model-parent")
+    helper = create_agent(client, "Researcher", "model-helper", capabilities=["research"])
+    specialist = create_agent(client, "Specialist", "model-specialist", capabilities=["security"])
+    conversation_id = client.post("/chat/conversations", json={"agent_id": parent["id"]}).json()["id"]
+    provider.outputs = [
+        HandoffRequest(capability="research", task="Review the design."),
+        HandoffRequest(capability="security", task="Review security."),
+        "I could not complete the delegated review.",
+    ]
+
+    response = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "Review the design."},
+    )
+
+    assert response.status_code == 201, response.text
+    run = response.json()
+    assert run["status"] == "completed"
+    assert len(run["tasks"]) == 2
+    child_task = next(task for task in run["tasks"] if task["parent_task_id"] is not None)
+    assert child_task["agent_id"] == helper["id"]
+    assert child_task["status"] == "failed"
+    assert child_task["error_code"] == "provider_error"
+    assert [call["allow_handoff"] for call in provider.calls] == [True, False, False]
+    assert all(task["agent_id"] != specialist["id"] for task in run["tasks"])
+
+
+def test_malformed_handoff_is_rejected_without_creating_a_child_task(client_and_provider):
+    client, provider = client_and_provider
+    parent = create_agent(client, "Coordinator", "model-parent")
+    create_agent(client, "Researcher", "model-helper", capabilities=["research"])
+    conversation_id = client.post("/chat/conversations", json={"agent_id": parent["id"]}).json()["id"]
+    provider.outputs = [HandoffRequest(capability="  ", task="Find supporting evidence.")]
+
+    response = client.post(
+        f"/chat/conversations/{conversation_id}/messages",
+        json={"content": "Review the evidence."},
+    )
+
+    assert response.status_code == 502
+    run_id = response.json()["detail"]["run_id"]
+    run = client.get(f"/runs/{run_id}").json()
+    assert run["status"] == "failed"
+    assert run["error_code"] == "provider_error"
+    assert len(run["tasks"]) == 1
+    assert run["tasks"][0]["status"] == "failed"
+    assert count_tasks(client) == 1
+
+
+def test_openai_provider_maps_only_an_explicit_tool_call_to_a_handoff(monkeypatch):
+    import langchain_openai
+
+    created: list[Any] = []
+
+    class StubChatOpenAI:
+        def __init__(self, model: str, api_key: str) -> None:
+            self.model = model
+            self.api_key = api_key
+            self.tools: list[dict[str, Any]] = []
+            self.index = len(created)
+            created.append(self)
+
+        def bind_tools(self, tools: list[dict[str, Any]]) -> "StubChatOpenAI":
+            self.tools = tools
+            return self
+
+        def invoke(self, messages: list[tuple[str, str]]) -> Any:
+            self.messages = messages
+            if self.index == 0:
+                return SimpleNamespace(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "handoff_to_agent",
+                            "args": {"capability": " RESEARCH ", "task": "Find two sources."},
+                        }
+                    ],
+                )
+            return SimpleNamespace(content="Final answer", tool_calls=[])
+
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", StubChatOpenAI)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    registry = ProviderRegistry({"openai": OpenAIChatProvider()})
+    agent = {
+        "id": "agent-1",
+        "instructions": "You are a coordinator.",
+        "model_provider": "openai",
+        "model_name": "test-model",
+    }
+
+    action = registry.generate(agent, [{"role": "user", "content": "Research this."}], allow_handoff=True)
+    final = registry.generate(agent, [{"role": "user", "content": "Continue."}], allow_handoff=False)
+
+    assert action == HandoffRequest(capability="research", task="Find two sources.")
+    assert final == "Final answer"
+    assert created[0].tools[0]["name"] == "handoff_to_agent"
+    assert "You may use the handoff_to_agent tool once" in created[0].messages[0][1]
+    assert created[1].tools == []
