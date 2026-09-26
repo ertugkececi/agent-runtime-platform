@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 
 from agent_runtime_platform.database import Database
 from agent_runtime_platform.providers import ProviderRegistry, list_codex_models
+from agent_runtime_platform.mcp_tools import MCPConfigurationError, public_tool_catalog
 from agent_runtime_platform.rooms import RoomRuntimeService
 from agent_runtime_platform.runtime import (
     AgentDisabledError,
@@ -58,6 +59,13 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/mcp/tools")
+    def list_mcp_tools() -> list[dict]:
+        try:
+            return public_tool_catalog()
+        except MCPConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/codex/models")
     def codex_models() -> list[dict]:

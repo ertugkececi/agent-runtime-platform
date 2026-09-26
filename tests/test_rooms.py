@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from agent_runtime_platform.api import create_app
-from agent_runtime_platform.models import QueueJob, RoomRunTurn
+from agent_runtime_platform.models import QueueJob, RoomRun, RoomRunTurn
 from agent_runtime_platform.providers import ProviderRegistry
 from agent_runtime_platform.queue_worker import claim_one, recover_interrupted_jobs
 
@@ -61,6 +61,13 @@ def test_room_run_is_queued_then_runs_in_fixed_order_with_shared_context(tmp_pat
     accepted = client.post(f"/rooms/{room['id']}/runs", json={"content": "Review this design"})
     assert accepted.status_code == 202, accepted.text
     run_id = accepted.json()["id"]
+    # Simulate a persisted snapshot from before rooms explicitly stripped tools.
+    with app.state.database.session() as session:
+        room_run = session.get(RoomRun, run_id)
+        room_run.agent_snapshots[0]["tool_ids"] = ["fixture/lookup"]
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(room_run, "agent_snapshots")
+        session.commit()
     assert accepted.json()["status_url"] == f"/runs/{run_id}"
     queued = client.get(f"/runs/{run_id}").json()
     assert queued["status"] == "queued"
@@ -70,6 +77,7 @@ def test_room_run_is_queued_then_runs_in_fixed_order_with_shared_context(tmp_pat
 
     run = client.get(f"/runs/{run_id}").json()
     assert run["status"] == "completed"
+    assert all(call["agent"].get("tool_ids", []) == [] for call in provider.calls)
     assert run["run_type"] == "room"
     assert [turn["content"] for turn in run["turns"]] == [
         "first view", "moderator view", "third view", "final summary"

@@ -28,6 +28,7 @@ from agent_runtime_platform.models import (
     utc_now,
 )
 from agent_runtime_platform.providers import HandoffRequest, ProviderError, ProviderRegistry
+from agent_runtime_platform.mcp_tools import validate_tool_ids
 
 
 class AgentNotFoundError(Exception):
@@ -82,6 +83,7 @@ def _agent_snapshot(agent: Agent) -> dict[str, Any]:
         "model_name": agent.model_name,
         "model_reasoning_effort": agent.model_reasoning_effort,
         "capabilities": sorted(item.capability for item in agent.capability_records),
+        "tool_ids": list(agent.tool_ids or []),
         "version": agent.version,
     }
 
@@ -94,6 +96,7 @@ def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "model_name": snapshot["model_name"],
         "model_reasoning_effort": snapshot.get("model_reasoning_effort"),
         "capabilities": snapshot["capabilities"],
+        "tool_ids": list(snapshot.get("tool_ids", [])),
         "version": snapshot["version"],
     }
 
@@ -109,6 +112,7 @@ def _agent_payload(agent: Agent) -> dict[str, Any]:
         "model_reasoning_effort": agent.model_reasoning_effort,
         "enabled": agent.enabled,
         "capabilities": sorted(item.capability for item in agent.capability_records),
+        "tool_ids": list(agent.tool_ids or []),
         "version": agent.version,
         "created_at": agent.created_at.isoformat(),
         "updated_at": agent.updated_at.isoformat(),
@@ -221,6 +225,10 @@ class AgentRuntimeService:
     def create_agent(self, data: dict[str, Any]) -> dict[str, Any]:
         if not self.providers.supports(data["model_provider"]):
             raise InvalidMessageError("The requested model provider is not configured.")
+        try:
+            data["tool_ids"] = validate_tool_ids(data.get("tool_ids", []), data["model_provider"])
+        except ValueError as exc:
+            raise InvalidMessageError(str(exc)) from exc
         with self.database.session() as session:
             agent_data = dict(data)
             capabilities = agent_data.pop("capabilities", [])
@@ -255,6 +263,13 @@ class AgentRuntimeService:
             if "model_provider" in changes and not self.providers.supports(changes["model_provider"]):
                 raise InvalidMessageError("The requested model provider is not configured.")
             updated_values = dict(changes)
+            if "tool_ids" in updated_values or "model_provider" in updated_values:
+                try:
+                    proposed_provider = updated_values.get("model_provider", agent.model_provider)
+                    proposed_tools = updated_values.get("tool_ids", agent.tool_ids or [])
+                    updated_values["tool_ids"] = validate_tool_ids(proposed_tools, proposed_provider)
+                except ValueError as exc:
+                    raise InvalidMessageError(str(exc)) from exc
             capabilities = updated_values.pop("capabilities", None)
             if updated_values or capabilities is not None:
                 for key, value in updated_values.items():
@@ -689,11 +704,46 @@ class AgentRuntimeService:
         allow_handoff: bool,
         task_id: str | None = None,
     ) -> str | HandoffRequest:
+        snapshot_tool_ids = sorted(set(agent.get("tool_ids") or []))
+        effective_tool_ids: list[str] = []
+        active_agent_version = None
+        with self.database.session() as session:
+            current_agent = session.get(Agent, agent["id"])
+            if current_agent is not None:
+                active_agent_version = current_agent.version
+                current_grants = set(current_agent.tool_ids or []) if current_agent.enabled else set()
+                effective_tool_ids = sorted(set(snapshot_tool_ids) & current_grants)
+                if effective_tool_ids:
+                    try:
+                        effective_tool_ids = validate_tool_ids(
+                            effective_tool_ids, agent["model_provider"]
+                        )
+                    except ValueError:
+                        effective_tool_ids = []
+            permission_payload = {
+                "agent_id": agent["id"],
+                "phase": phase,
+                "snapshot_tool_ids": snapshot_tool_ids,
+                "effective_tool_ids": effective_tool_ids,
+                "active_agent_version": active_agent_version,
+            }
+            run = session.get(Run, run_id)
+            if run is not None:
+                _append_event(session, run, "mcp_tool_permissions_checked", permission_payload)
+            else:
+                chat_run = session.get(HumanChatRun, run_id)
+                if chat_run is not None:
+                    _append_human_chat_event(
+                        session, chat_run, "mcp_tool_permissions_checked", permission_payload
+                    )
+            session.commit()
+
         payload = {
             "agent_id": agent["id"],
             "provider": agent["model_provider"],
             "model": agent["model_name"],
             "phase": phase,
+            "tool_ids": effective_tool_ids,
         }
         if task_id is not None:
             payload["task_id"] = task_id
@@ -708,7 +758,10 @@ class AgentRuntimeService:
                 _append_human_chat_event(session, chat_run, "model_call_started", payload)
             session.commit()
 
-        output = self.providers.generate(agent, history, allow_handoff=allow_handoff)
+        provider_agent = dict(agent)
+        provider_agent["tool_ids"] = effective_tool_ids
+        provider_agent["tool_event_callback"] = lambda tool_event: self._record_mcp_tool_event(run_id, phase, tool_event)
+        output = self.providers.generate(provider_agent, history, allow_handoff=allow_handoff)
         if isinstance(output, str) and not output.strip():
             raise ProviderError("The model returned an empty response.")
 
@@ -730,6 +783,26 @@ class AgentRuntimeService:
                 _append_human_chat_event(session, chat_run, "model_call_completed", completed_payload)
             session.commit()
         return output.strip() if isinstance(output, str) else output
+
+    def _record_mcp_tool_event(
+        self, run_id: str, phase: str, tool_event: dict[str, str]
+    ) -> None:
+        payload = {
+            "server": tool_event["server"],
+            "tool": tool_event["tool"],
+            "status": tool_event["status"],
+            "phase": phase,
+        }
+        with self.database.session() as session:
+            run = session.get(Run, run_id)
+            if run is not None:
+                _append_event(session, run, "mcp_tool_call", payload)
+            else:
+                chat_run = session.get(HumanChatRun, run_id)
+                if chat_run is None:
+                    raise RuntimeError("Run disappeared during MCP tool execution.")
+                _append_human_chat_event(session, chat_run, "mcp_tool_call", payload)
+            session.commit()
 
     def _execute_handoff(self, state: MessagingState) -> dict[str, Any]:
         request = state.get("handoff_request")
