@@ -19,6 +19,7 @@
         font-synthesis: none;
       }
       * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
       body { margin: 0; min-height: 100vh; }
       button, input, select, textarea { font: inherit; }
       button { cursor: pointer; }
@@ -35,6 +36,8 @@
       .brand-mark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 9px; background: #3156d3; color: white; font-size: 15px; }
       .topbar a { color: #536178; text-decoration: none; font-size: 14px; }
       .topbar-actions { display: flex; align-items: center; gap: 15px; }
+      #login-required { width: min(520px, calc(100% - 32px)); margin: 12vh auto; padding: 32px; text-align: center; background: #fff; border: 1px solid #e4e9f0; border-radius: 16px; }
+      [data-theme="dark"] #login-required { background: #1b2431; border-color: #354255; }
       .theme-toggle { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #dce2eb; border-radius: 9px; padding: 7px 10px; background: #fff; color: #34415a; font-size: 13px; font-weight: 650; white-space: nowrap; }
       .theme-toggle:hover { background: #edf1f7; }
       .theme-toggle:focus-visible { outline: 2px solid #6b83e0; outline-offset: 2px; }
@@ -133,8 +136,11 @@
       <div class="topbar-actions">
         <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Açık moda geç" aria-pressed="true"><span id="theme-icon" aria-hidden="true">☀</span><span class="theme-label" id="theme-label">Açık mod</span></button>
         <a href="/docs">API belgeleri</a>
+        <a id="login-link" href="/auth/login" hidden>Giriş yap</a>
+        <button class="button secondary" id="logout-button" type="button" hidden>Çıkış</button>
       </div>
     </header>
+    <section id="login-required" hidden><h1>Oturum aç</h1><p class="muted">Bu çalışma alanına erişmek için yapılandırılmış tek kullanıcı hesabıyla giriş yap.</p><a class="button" href="/auth/login">OIDC ile giriş yap</a></section>
     <main class="layout">
       <aside class="panel">
         <h1>Sohbet</h1>
@@ -269,13 +275,37 @@
       let conversationRetryTimer = 0;
       let agents = [];
       let codexModels = [];
+      let csrfToken = "";
+      let authEnabled = false;
+
+      async function initializeAuth() {
+        const response = await fetch("/auth/session", { credentials: "same-origin" });
+        const session = await response.json().catch(() => ({}));
+        authEnabled = Boolean(session.auth_enabled);
+        if (!authEnabled) return true;
+        if (!session.authenticated) {
+          document.querySelector("main.layout").hidden = true;
+          document.getElementById("login-required").hidden = false;
+          document.getElementById("login-link").hidden = false;
+          return false;
+        }
+        csrfToken = session.csrf_token;
+        document.getElementById("logout-button").hidden = false;
+        return true;
+      }
+      document.getElementById("logout-button").addEventListener("click", async () => {
+        const response = await fetch("/auth/logout", { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken } });
+        if (response.ok) window.location.assign("/");
+      });
 
       async function request(path, options = {}) {
         const response = await fetch(path, {
           ...options,
-          headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json", ...((options.method && !["GET", "HEAD", "OPTIONS"].includes(options.method.toUpperCase()) && csrfToken) ? { "X-CSRF-Token": csrfToken } : {}), ...(options.headers || {}) },
         });
         const payload = await response.json().catch(() => ({}));
+        if (response.status === 401 && authEnabled) window.location.assign("/");
         if (!response.ok) {
           const detail = payload.detail;
           const message = typeof detail === "string" ? detail : detail?.error || `İstek başarısız (${response.status})`;
@@ -1165,8 +1195,11 @@
         }
       });
 
-      loadAgents().then(loadCodexModels).then(() => {
-        if (localStorage.getItem("agentRuntimeViewMode") === "room") setViewMode("room");
+      initializeAuth().then((allowed) => {
+        if (!allowed) return;
+        return loadAgents().then(loadCodexModels).then(() => {
+          if (localStorage.getItem("agentRuntimeViewMode") === "room") setViewMode("room");
+        });
       }).catch((error) => setStatus(error.message, true));
     </script>
   </body>
