@@ -73,6 +73,24 @@
       .bubble { max-width: min(78%, 620px); white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px 14px; border-radius: 13px; background: #f0f3f8; line-height: 1.5; font-size: 14px; }
       .bubble-row.user .bubble { color: #fff; background: #3156d3; border-bottom-right-radius: 4px; }
       .bubble-row.agent .bubble { border-bottom-left-radius: 4px; }
+      .bubble-row.moderator .speaker { color: #3156d3; font-weight: 750; }
+      .bubble-row.moderator .bubble { color: #172554; background: #e4ebff; border: 1px solid #bdcbff; font-weight: 600; }
+      .room-order { display: grid; gap: 7px; margin: 9px 0 0; padding: 0; list-style: none; }
+      .room-order li { display: flex; align-items: center; gap: 7px; padding: 7px 8px; border: 1px solid #dce2eb; border-radius: 8px; font-size: 13px; }
+      .room-order li span { flex: 1; }
+      .room-order button { border: 1px solid #dce2eb; border-radius: 6px; padding: 3px 7px; background: #fff; color: #34415a; }
+      .room-agent-list { display: grid; gap: 7px; max-height: 190px; overflow-y: auto; padding: 8px; border: 1px solid #dce2eb; border-radius: 9px; }
+      .room-agent-option { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 500; }
+      .room-agent-option input { width: auto; }
+      .room-controls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+      .room-controls select { flex: 1; min-width: 0; }
+      .mode-switch { display: flex; gap: 7px; }
+      .mode-switch .button { padding: 8px 10px; font-size: 12px; }
+      .room-run { color: #718096; font-size: 12px; }
+      [data-theme="dark"] .bubble-row.moderator .speaker { color: #b8c8ff; }
+      [data-theme="dark"] .bubble-row.moderator .bubble { color: #f0f4ff; background: #2c3e68; border-color: #50689f; }
+      [data-theme="dark"] .room-order li, [data-theme="dark"] .room-agent-list { border-color: #45546a; }
+      [data-theme="dark"] .room-order button { color: #e4edfa; background: #2a394d; border-color: #485a73; }
       .composer { display: flex; align-items: flex-end; gap: 10px; padding: 15px 18px 18px; border-top: 1px solid #edf0f4; }
       .composer textarea { min-height: 46px; max-height: 150px; }
       .composer .button { height: 44px; min-width: 76px; }
@@ -98,6 +116,9 @@
         .layout { width: min(100% - 20px, 600px); margin: 12px auto; grid-template-columns: 1fr; gap: 12px; }
         .panel { padding: 17px; }
         .chat { min-height: 58vh; }
+        .chat-head { align-items: flex-start; flex-direction: column; }
+        .mode-switch { width: 100%; }
+        .mode-switch .button { flex: 1; }
         .bubble { max-width: 90%; }
       }
       @media (max-width: 420px) {
@@ -119,6 +140,7 @@
         <h1>Sohbet</h1>
         <p class="muted">Bir ajan seç ve konuşmaya başla. Sohbet geçmişin bu yerel veritabanında saklanır.</p>
         <p class="muted">Codex sağlayıcısı sunucudaki ChatGPT girişini kullanır (<code>codex login status</code>).</p>
+        <div id="single-chat-tools">
         <label for="agent-select">Ajan</label>
         <select id="agent-select" aria-label="Sohbet edilecek ajan"></select>
         <button class="button secondary full" id="new-chat" type="button">Yeni sohbet</button>
@@ -154,11 +176,34 @@
             <button class="button full" id="create-agent-button" type="submit" disabled>Ajanı oluştur</button>
           </form>
         </details>
+        </div>
+        <section id="room-tools" hidden aria-label="Grup odası yönetimi">
+          <h2 style="font-size:15px; margin:0 0 8px;">Grup odası</h2>
+          <p class="muted">Ajanları sırayla seç; en fazla beş ajan ve bir moderatör belirle.</p>
+          <p class="muted" id="room-roster" aria-live="polite"></p>
+          <label for="room-name">Oda adı</label>
+          <input id="room-name" maxlength="120" placeholder="Örn. Tasarım değerlendirmesi" />
+          <label>Katılımcı ajanlar (2–5)</label>
+          <div class="room-agent-list" id="room-agent-list" role="group" aria-label="Odaya katılacak ajanlar"></div>
+          <ol class="room-order" id="room-order" aria-label="Ajan konuşma sırası"></ol>
+          <label for="room-moderator">Moderatör</label>
+          <select id="room-moderator" disabled><option value="">Önce katılımcı seç</option></select>
+          <button class="button full" id="create-room-button" type="button">Odayı oluştur</button>
+          <label for="room-select">Kayıtlı odalar</label>
+          <div class="room-controls">
+            <select id="room-select" aria-label="Açılacak grup odası"><option value="">Oda seç</option></select>
+            <button class="button secondary" id="open-room-button" type="button">Aç</button>
+          </div>
+        </section>
       </aside>
 
       <section class="chat" aria-label="Ajan sohbeti">
         <div class="chat-head">
           <div><h2 id="chat-title">Yeni sohbet</h2><p id="status" aria-live="polite">Ajan seçip mesaj yazabilirsin.</p></div>
+          <div class="mode-switch" role="group" aria-label="Sohbet modu">
+            <button class="button secondary" id="chat-mode-button" type="button" aria-pressed="true">Sohbet</button>
+            <button class="button secondary" id="room-mode-button" type="button" aria-pressed="false">Grup odası</button>
+          </div>
         </div>
         <div class="messages" id="messages" aria-live="polite">
           <div class="empty" id="empty-state">Mesajların ve ajan yanıtların burada görünecek.</div>
@@ -186,6 +231,24 @@
       const editInstructions = document.getElementById("edit-agent-instructions");
       const editAgentButton = document.getElementById("edit-agent-button");
       const themeToggle = document.getElementById("theme-toggle");
+      const roomTools = document.getElementById("room-tools");
+      const singleChatTools = document.getElementById("single-chat-tools");
+      const roomAgentList = document.getElementById("room-agent-list");
+      const roomOrderList = document.getElementById("room-order");
+      const roomModeratorSelect = document.getElementById("room-moderator");
+      const roomSelect = document.getElementById("room-select");
+      const roomCreateButton = document.getElementById("create-room-button");
+      const chatModeButton = document.getElementById("chat-mode-button");
+      const roomModeButton = document.getElementById("room-mode-button");
+      let viewMode = "chat";
+      let activeRoomId = localStorage.getItem("agentRuntimeRoomId") || "";
+      let activeRoomRunId = "";
+      let roomRunInFlight = false;
+      let roomHistoryLoading = false;
+      let roomSubmissionUncertain = false;
+      let roomCreateInFlight = false;
+      let roomRuns = [];
+      let rooms = readSavedRooms();
       function applyTheme(theme) {
         const isDark = theme === "dark";
         document.documentElement.dataset.theme = theme;
@@ -227,6 +290,440 @@
         statusElement.textContent = message;
         statusElement.classList.toggle("error", isError);
       }
+
+      function readSavedRooms() {
+        try {
+          const saved = JSON.parse(localStorage.getItem("agentRuntimeRooms") || "[]");
+          return Array.isArray(saved) ? saved.filter((room) => room && room.id) : [];
+        } catch (_) { return []; }
+      }
+
+      function saveRooms() {
+        try { localStorage.setItem("agentRuntimeRooms", JSON.stringify(rooms)); } catch (_) { /* In-memory room selection still works. */ }
+      }
+
+      function rememberRoom(room) {
+        rooms = [room, ...rooms.filter((item) => item.id !== room.id)];
+        saveRooms();
+        renderRoomOptions();
+      }
+
+      function renderRoomOptions() {
+        roomSelect.replaceChildren();
+        addSelectOption(roomSelect, "", "Oda seç");
+        for (const room of rooms) addSelectOption(roomSelect, room.id, room.name || room.id);
+        roomSelect.value = activeRoomId;
+      }
+
+      function orderedRoomAgentIds() {
+        return [...roomOrderList.querySelectorAll("[data-agent-id]")].map((item) => item.dataset.agentId);
+      }
+
+      function renderRoomOrder(selectedIds = orderedRoomAgentIds()) {
+        const previousModerator = roomModeratorSelect.value;
+        roomOrderList.replaceChildren();
+        const validIds = selectedIds.filter((id, index) =>
+          agents.some((agent) => agent.id === id) && selectedIds.indexOf(id) === index
+        ).slice(0, 5);
+        for (const [index, id] of validIds.entries()) {
+          const agent = agents.find((item) => item.id === id);
+          const row = document.createElement("li");
+          row.dataset.agentId = id;
+          const name = document.createElement("span");
+          name.textContent = `${index + 1}. ${agent?.name || id}`;
+          row.append(name);
+          for (const [direction, label] of [["up", "↑"], ["down", "↓"]]) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = label;
+            button.setAttribute("aria-label", `${agent?.name || id} sırasını ${direction === "up" ? "yukarı" : "aşağı"} taşı`);
+            button.disabled = direction === "up" ? index === 0 : index === validIds.length - 1;
+            button.addEventListener("click", () => {
+              const next = [...orderedRoomAgentIds()];
+              const target = index + (direction === "up" ? -1 : 1);
+              [next[index], next[target]] = [next[target], next[index]];
+              renderRoomOrder(next);
+            });
+            row.append(button);
+          }
+          roomOrderList.append(row);
+        }
+        const moderatorId = validIds.includes(previousModerator) ? previousModerator : validIds[0] || "";
+        roomModeratorSelect.replaceChildren();
+        for (const id of validIds) {
+          const agent = agents.find((item) => item.id === id);
+          addSelectOption(roomModeratorSelect, id, agent?.name || id);
+        }
+        roomModeratorSelect.disabled = validIds.length < 2;
+        if (!validIds.length) addSelectOption(roomModeratorSelect, "", "Önce katılımcı seç");
+        roomModeratorSelect.value = moderatorId;
+        roomCreateButton.disabled = validIds.length < 2 || roomCreateInFlight || roomRunInFlight;
+      }
+
+      function renderRoomAgents(selectedIds = []) {
+        roomAgentList.replaceChildren();
+        for (const agent of agents) {
+          const label = document.createElement("label");
+          label.className = "room-agent-option";
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.value = agent.id;
+          checkbox.checked = selectedIds.includes(agent.id);
+          label.append(checkbox, document.createTextNode(agent.name));
+          roomAgentList.append(label);
+        }
+        renderRoomOrder(selectedIds);
+      }
+
+      function roomRunsFromPayload(payload) {
+        if (Array.isArray(payload)) return payload;
+        return payload?.runs || payload?.items || [];
+      }
+
+      function roomRunsOldestFirst(payload) {
+        return [...roomRunsFromPayload(payload)].reverse();
+      }
+
+      function roomRunLabel(status) {
+        return ({ queued: "Sırada", running: "Çalışıyor", completed: "Tamamlandı", failed: "Başarısız" })[status] || "Durum alınıyor";
+      }
+
+      function splitRoomTurns(turns) {
+        const ordered = [...turns].sort((left, right) => (left.position || 0) - (right.position || 0));
+        const isSummary = (turn) => turn.is_summary || turn.phase === "moderator_summary";
+        return {
+          participantTurns: ordered.filter((turn) => !isSummary(turn)),
+          summaryTurn: ordered.find(isSummary),
+        };
+      }
+
+      function appendRoomBubble(speakerName, content, kind = "agent") {
+        const row = document.createElement("div");
+        row.className = `bubble-row ${kind}`;
+        const speaker = document.createElement("span");
+        speaker.className = "speaker";
+        speaker.textContent = speakerName;
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        bubble.textContent = content || "Bu tur için içerik henüz kaydedilmedi.";
+        row.append(speaker, bubble);
+        messagesElement.append(row);
+      }
+
+      function renderRoomRuns() {
+        messagesElement.replaceChildren();
+        if (!roomRuns.length) {
+          messagesElement.append(emptyState);
+          return;
+        }
+        for (const run of roomRuns) {
+          appendRoomBubble("Görev", run.content || "Grup görevi", "user");
+          const meta = document.createElement("div");
+          meta.className = "room-run";
+          meta.textContent = `Çalıştırma ${run.id} · ${roomRunLabel(run.status)}${run.error_code ? ` · ${run.error_code}` : ""}`;
+          messagesElement.append(meta);
+          const { participantTurns, summaryTurn } = splitRoomTurns(run.turns || []);
+          for (const turn of participantTurns) {
+            const text = turn.content || (turn.status ? `Durum: ${roomRunLabel(turn.status)}` : "");
+            appendRoomBubble(turn.agent_name || turn.agent_id || "Ajan", text);
+          }
+          const finalAnswer = run.final_answer || summaryTurn?.content;
+          if (finalAnswer) appendRoomBubble(`Moderatör · ${summaryTurn?.agent_name || "Sonuç"}`, finalAnswer, "moderator");
+          else if (summaryTurn && !["queued", "running"].includes(run.status)) {
+            appendRoomBubble(`Moderatör · ${summaryTurn.agent_name || "Sonuç"}`,
+              summaryTurn.content || `Durum: ${roomRunLabel(summaryTurn.status)}`, "moderator");
+          }
+        }
+        messagesElement.scrollTop = messagesElement.scrollHeight;
+      }
+
+      function showRoomRunState(run) {
+        const detail = run.error_code ? ` · ${run.error_code}` : "";
+        setStatus(`Grup görevi ${roomRunLabel(run.status).toLocaleLowerCase("tr-TR")}.${detail}`, run.status === "failed");
+        sendButton.disabled = ["queued", "running"].includes(run.status) || roomRunInFlight || roomSubmissionUncertain;
+      }
+
+      function setViewMode(mode) {
+        if (mode === viewMode) return;
+        viewGeneration += 1;
+        viewMode = mode;
+        try { localStorage.setItem("agentRuntimeViewMode", mode); } catch (_) { /* Mode still changes for this page. */ }
+        activeRunId = "";
+        sendInFlight = false;
+        uncertainSubmission = false;
+        clearTimeout(conversationRetryTimer);
+        roomHistoryLoading = mode === "room";
+        sendButton.disabled = mode === "room";
+        messageInput.disabled = false;
+        singleChatTools.hidden = mode !== "chat";
+        roomTools.hidden = mode !== "room";
+        chatModeButton.setAttribute("aria-pressed", String(mode === "chat"));
+        roomModeButton.setAttribute("aria-pressed", String(mode === "room"));
+        if (mode === "chat") {
+          messageInput.placeholder = "Mesajını yaz… (Ctrl/⌘ + Enter gönderir)";
+          document.getElementById("chat-title").textContent = conversationId ? "Sohbet geçmişi" : "Yeni sohbet";
+          setStatus("Ajan seçip mesaj yazabilirsin.");
+          void loadConversation();
+        } else {
+          messageInput.placeholder = "Grup odasına vereceğin görevi yaz…";
+          setStatus("Bir oda oluştur veya kayıtlı odalardan birini aç.");
+          renderRoomOptions();
+          if (activeRoomId) void loadRoomView(activeRoomId);
+          else {
+            roomHistoryLoading = false;
+            sendButton.disabled = roomSubmissionUncertain;
+            renderRoomRuns();
+          }
+        }
+        messageInput.focus();
+      }
+
+      async function loadRoomView(roomId) {
+        const generation = viewGeneration;
+        activeRoomId = roomId;
+        roomHistoryLoading = true;
+        sendButton.disabled = true;
+        try { localStorage.setItem("agentRuntimeRoomId", roomId); } catch (_) { /* Room still opens for this page. */ }
+        try {
+          const [room, historyPayload] = await Promise.all([
+            request(`/rooms/${encodeURIComponent(roomId)}`),
+            request(`/rooms/${encodeURIComponent(roomId)}/runs`),
+          ]);
+          if (viewMode !== "room" || roomId !== activeRoomId || generation !== viewGeneration) return;
+          const roomName = room.name || rooms.find((item) => item.id === roomId)?.name || "Grup odası";
+          rememberRoom({ id: room.id, name: roomName });
+          roomSelect.value = roomId;
+          document.getElementById("chat-title").textContent = roomName;
+          const participants = [...(room.participants || [])].sort((left, right) => (left.position || 0) - (right.position || 0));
+          const roster = participants.map((participant) => {
+            const name = participant.agent_snapshot?.name || agents.find((agent) => agent.id === participant.agent_id)?.name || participant.agent_id;
+            return participant.is_moderator ? `${name} (moderatör)` : name;
+          });
+          document.getElementById("room-roster").textContent = roster.length ? `Sıra: ${roster.join(" → ")}` : "";
+          const history = roomRunsOldestFirst(historyPayload);
+          const detailed = await Promise.all(history.map(async (summary) => {
+            if (!summary.id) return summary;
+            try { return await request(`/runs/${encodeURIComponent(summary.id)}`); }
+            catch (_) { return summary; }
+          }));
+          if (viewMode !== "room" || roomId !== activeRoomId || generation !== viewGeneration) return;
+          roomRuns = detailed;
+          renderRoomRuns();
+          roomHistoryLoading = false;
+          const pending = [...roomRuns].reverse().find((run) => ["queued", "running"].includes(run.status));
+          activeRoomRunId = pending?.id || "";
+          if (pending) {
+            activeRoomRunId = pending.id;
+            showRoomRunState(pending);
+            void monitorRoomRun(pending.id, roomId, generation);
+          } else if (roomRuns.length) showRoomRunState(roomRuns[roomRuns.length - 1]);
+          else {
+            activeRoomRunId = "";
+            sendButton.disabled = roomSubmissionUncertain;
+            setStatus("Bu odada henüz görev yok.");
+          }
+        } catch (error) {
+          if (viewMode === "room" && roomId === activeRoomId && generation === viewGeneration) {
+            roomHistoryLoading = false;
+            activeRoomRunId = "";
+            sendButton.disabled = roomSubmissionUncertain;
+            setStatus(`Oda yüklenemedi: ${error.message}`, true);
+          }
+        }
+      }
+
+      async function monitorRoomRun(runId, roomId, generation) {
+        let delay = 1200;
+        while (runId === activeRoomRunId && roomId === activeRoomId &&
+          viewMode === "room" && generation === viewGeneration) {
+          try {
+            const run = await request(`/runs/${encodeURIComponent(runId)}`);
+            if (runId !== activeRoomRunId || roomId !== activeRoomId ||
+              viewMode !== "room" || generation !== viewGeneration) return;
+            roomRuns = roomRuns.map((item) => item.id === runId ? run : item);
+            renderRoomRuns();
+            showRoomRunState(run);
+            if (["completed", "failed"].includes(run.status)) {
+              activeRoomRunId = "";
+              roomSubmissionUncertain = false;
+              sendButton.disabled = false;
+              return;
+            }
+            delay = 1200;
+          } catch (_) {
+            if (runId !== activeRoomRunId || roomId !== activeRoomId ||
+              viewMode !== "room" || generation !== viewGeneration) return;
+            setStatus("Bağlantı kesildi. Grup görevi yeniden denenecek…", true);
+            delay = Math.min(delay * 1.7, 10000);
+          }
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+
+      async function createRoom() {
+        if (roomCreateInFlight || roomRunInFlight) return;
+        const participantIds = orderedRoomAgentIds();
+        if (participantIds.length < 2 || participantIds.length > 5) {
+          setStatus("Oda için sırayla 2–5 etkin ajan seç.", true);
+          return;
+        }
+        const name = document.getElementById("room-name").value.trim();
+        if (!name) {
+          setStatus("Oda adı gir.", true);
+          return;
+        }
+        const moderatorId = roomModeratorSelect.value;
+        if (!participantIds.includes(moderatorId)) {
+          setStatus("Moderatör, katılımcı ajanlardan biri olmalı.", true);
+          return;
+        }
+        roomCreateInFlight = true;
+        roomCreateButton.disabled = true;
+        sendButton.disabled = true;
+        chatModeButton.disabled = true;
+        roomModeButton.disabled = true;
+        document.getElementById("open-room-button").disabled = true;
+        setStatus("Grup odası oluşturuluyor…");
+        try {
+          const room = await request("/rooms", {
+            method: "POST",
+            body: JSON.stringify({ name, participant_agent_ids: participantIds, moderator_agent_id: moderatorId }),
+          });
+          rememberRoom({ id: room.id, name: room.name || name });
+          activeRoomId = room.id;
+          renderRoomOptions();
+          if (viewMode === "room") {
+            viewGeneration += 1;
+            activeRoomRunId = "";
+            void loadRoomView(room.id);
+          } else setViewMode("room");
+        } catch (error) {
+          setStatus(error.message, true);
+        } finally {
+          roomCreateInFlight = false;
+          renderRoomOrder();
+          chatModeButton.disabled = false;
+          roomModeButton.disabled = false;
+          document.getElementById("open-room-button").disabled = false;
+          sendButton.disabled = viewMode === "room" &&
+            (roomHistoryLoading || Boolean(activeRoomRunId) || roomSubmissionUncertain);
+        }
+      }
+
+      async function submitRoomTask() {
+        const content = messageInput.value.trim();
+        const roomId = activeRoomId;
+        if (!content || !roomId || activeRoomRunId || roomRunInFlight || roomCreateInFlight || roomHistoryLoading || roomSubmissionUncertain) return;
+        const generation = viewGeneration;
+        roomRunInFlight = true;
+        roomCreateButton.disabled = true;
+        sendButton.disabled = true;
+        messageInput.disabled = true;
+        chatModeButton.disabled = true;
+        roomModeButton.disabled = true;
+        document.getElementById("open-room-button").disabled = true;
+        setStatus("Grup görevi kuyruğa gönderiliyor…");
+        const knownIds = new Set(roomRuns.map((run) => run.id));
+        let postStarted = false;
+        try {
+          const before = roomRunsFromPayload(await request(`/rooms/${encodeURIComponent(roomId)}/runs`));
+          if (generation !== viewGeneration || roomId !== activeRoomId || viewMode !== "room") return;
+          for (const item of before) if (item.id) knownIds.add(item.id);
+          const pending = before.find((run) => ["queued", "running"].includes(run.status));
+          if (pending) {
+            const fullRun = await request(`/runs/${encodeURIComponent(pending.id)}`).catch(() => pending);
+            if (generation !== viewGeneration || roomId !== activeRoomId || viewMode !== "room") return;
+            activeRoomRunId = pending.id;
+            const existing = roomRuns.findIndex((run) => run.id === pending.id);
+            if (existing >= 0) roomRuns[existing] = fullRun;
+            else roomRuns.push(fullRun);
+            renderRoomRuns();
+            showRoomRunState(fullRun);
+            void monitorRoomRun(pending.id, roomId, generation);
+            return;
+          }
+          postStarted = true;
+          const accepted = await request(`/rooms/${encodeURIComponent(roomId)}/runs`, {
+            method: "POST",
+            body: JSON.stringify({ content }),
+          });
+          if (generation !== viewGeneration || roomId !== activeRoomId || viewMode !== "room") return;
+          messageInput.value = "";
+          activeRoomRunId = accepted.id;
+          roomRuns.push({ id: accepted.id, room_id: roomId, content, status: accepted.status || "queued", turns: [] });
+          renderRoomRuns();
+          showRoomRunState(roomRuns[roomRuns.length - 1]);
+          void monitorRoomRun(accepted.id, roomId, generation);
+        } catch (error) {
+          if (generation !== viewGeneration || roomId !== activeRoomId || viewMode !== "room") return;
+          let recovery = null;
+          let recoveredRun = null;
+          if (postStarted) {
+            try {
+              const after = roomRunsFromPayload(await request(`/rooms/${encodeURIComponent(roomId)}/runs`));
+              if (generation !== viewGeneration || roomId !== activeRoomId || viewMode !== "room") return;
+              recovery = after;
+              recoveredRun = after.find((run) => run.content === content && run.id && !knownIds.has(run.id));
+            } catch (_) { recovery = null; }
+          }
+          if (generation !== viewGeneration || roomId !== activeRoomId || viewMode !== "room") return;
+          if (recoveredRun) {
+            messageInput.value = "";
+            activeRoomRunId = recoveredRun.id;
+            const fullRun = await request(`/runs/${encodeURIComponent(recoveredRun.id)}`).catch(() => recoveredRun);
+            if (generation !== viewGeneration || roomId !== activeRoomId || viewMode !== "room") return;
+            roomRuns.push(fullRun);
+            renderRoomRuns();
+            showRoomRunState(fullRun);
+            void monitorRoomRun(recoveredRun.id, roomId, generation);
+          } else {
+            roomSubmissionUncertain = postStarted && recovery === null;
+            setStatus(`${error.message}${roomSubmissionUncertain ? " Gönderim doğrulanamadı; yinelenen görev oluşturmamak için oda yenilenene kadar gönderim kilitlendi." : ""}`, true);
+            sendButton.disabled = roomSubmissionUncertain;
+          }
+        } finally {
+          roomRunInFlight = false;
+          renderRoomOrder();
+          if (generation === viewGeneration) {
+            chatModeButton.disabled = false;
+            roomModeButton.disabled = false;
+            document.getElementById("open-room-button").disabled = false;
+            messageInput.disabled = false;
+            sendButton.disabled = Boolean(activeRoomRunId) || roomSubmissionUncertain;
+            messageInput.focus();
+          }
+        }
+      }
+
+      roomAgentList.addEventListener("change", (event) => {
+        const checkbox = event.target;
+        if (!(checkbox instanceof HTMLInputElement) || checkbox.type !== "checkbox") return;
+        const selected = orderedRoomAgentIds();
+        if (checkbox.checked) {
+          if (selected.length >= 5) {
+            checkbox.checked = false;
+            setStatus("Bir odaya en fazla beş ajan eklenebilir.", true);
+            return;
+          }
+          if (!selected.includes(checkbox.value)) selected.push(checkbox.value);
+        } else {
+          const index = selected.indexOf(checkbox.value);
+          if (index >= 0) selected.splice(index, 1);
+        }
+        renderRoomOrder(selected);
+      });
+      roomCreateButton.addEventListener("click", () => void createRoom());
+      document.getElementById("open-room-button").addEventListener("click", () => {
+        if (!roomSelect.value || roomCreateInFlight || roomRunInFlight) return;
+        activeRoomId = roomSelect.value;
+        if (viewMode !== "room") setViewMode("room");
+        else {
+          viewGeneration += 1;
+          void loadRoomView(activeRoomId);
+        }
+      });
+      roomModeButton.addEventListener("click", () => setViewMode("room"));
+      chatModeButton.addEventListener("click", () => setViewMode("chat"));
 
       const effortLabels = { low: "Düşük", medium: "Orta", high: "Yüksek", xhigh: "Çok yüksek", max: "Maksimum", ultra: "Ultra" };
       function updateEffortOptions() {
@@ -447,6 +944,8 @@
       async function loadAgents(preferredId = "") {
         const allAgents = await request("/agents");
         agents = allAgents.filter((agent) => agent.enabled);
+        renderRoomAgents();
+        renderRoomOptions();
         agentSelect.replaceChildren();
         for (const agent of agents) {
           const option = document.createElement("option");
@@ -577,6 +1076,10 @@
 
       document.getElementById("chat-form").addEventListener("submit", async (event) => {
         event.preventDefault();
+        if (viewMode === "room") {
+          await submitRoomTask();
+          return;
+        }
         const content = messageInput.value.trim();
         const agentId = agentSelect.value;
         if (!content || !agentId || activeRunId || sendInFlight || uncertainSubmission) return;
@@ -662,7 +1165,9 @@
         }
       });
 
-      loadAgents().then(loadCodexModels).catch((error) => setStatus(error.message, true));
+      loadAgents().then(loadCodexModels).then(() => {
+        if (localStorage.getItem("agentRuntimeViewMode") === "room") setViewMode("room");
+      }).catch((error) => setStatus(error.message, true));
     </script>
   </body>
 </html>

@@ -58,7 +58,7 @@ function makeSubmit({ post, recovery, preflight }) {
   const monitorRun = (...args) => state.monitored.push(args);
   const scope = new Function(
     "messageInput", "agentSelect", "sendButton", "request", "loadConversation",
-    "showRunState", "setStatus", "monitorRun", "localStorage", "state",
+    "showRunState", "setStatus", "monitorRun", "localStorage", "state", "viewMode",
     `let activeRunId = state.activeRunId;
      let conversationId = state.conversationId;
      let viewGeneration = state.generation;
@@ -82,7 +82,7 @@ function makeSubmit({ post, recovery, preflight }) {
      };`,
   )(
     messageInput, { value: "agent" }, sendButton, request, loadConversation,
-    showRunState, setStatus, monitorRun, localStorage, state,
+    showRunState, setStatus, monitorRun, localStorage, state, "chat",
   );
   return { state, messageInput, ...scope };
 }

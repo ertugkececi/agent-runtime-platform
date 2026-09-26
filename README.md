@@ -267,4 +267,4 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olur. Yerel tek kullanıcılı sohbet arayüzü ve tek sunuculu kalıcı görev kuyruğu kullanılabilir; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir.
 
-Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve sınırlı grup odası çalışma zamanı sunar. Grup odalarının yönetim arayüzü, çok kullanıcılı erişim ve kimlik doğrulama, araç bağlayıcıları/MCP, A2A ve dağıtık kuyruk sonraki işlerin kapsamındadır.
+Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve oda oluşturma/geçmiş/çalıştırma izleme arayüzüyle sınırlı grup odası sunar. Yol haritasındaki sıradaki adım MCP araç bağlayıcıları ve uzak ajan sistemleriyle A2A uyumluluğudur. Çok kullanıcılı erişim ve kimlik doğrulama daha sonraki kapsamdadır; dağıtık kuyruk ancak ölçülen yük bunu gerektirirse ele alınır.
