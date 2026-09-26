@@ -357,7 +357,7 @@
         roomModeratorSelect.disabled = validIds.length < 2;
         if (!validIds.length) addSelectOption(roomModeratorSelect, "", "Önce katılımcı seç");
         roomModeratorSelect.value = moderatorId;
-        roomCreateButton.disabled = validIds.length < 2 || roomCreateInFlight;
+        roomCreateButton.disabled = validIds.length < 2 || roomCreateInFlight || roomRunInFlight;
       }
 
       function renderRoomAgents(selectedIds = []) {
@@ -561,7 +561,7 @@
       }
 
       async function createRoom() {
-        if (roomCreateInFlight) return;
+        if (roomCreateInFlight || roomRunInFlight) return;
         const participantIds = orderedRoomAgentIds();
         if (participantIds.length < 2 || participantIds.length > 5) {
           setStatus("Oda için sırayla 2–5 etkin ajan seç.", true);
@@ -607,6 +607,7 @@
         if (!content || !roomId || activeRoomRunId || roomRunInFlight || roomHistoryLoading || roomSubmissionUncertain) return;
         const generation = viewGeneration;
         roomRunInFlight = true;
+        roomCreateButton.disabled = true;
         sendButton.disabled = true;
         messageInput.disabled = true;
         chatModeButton.disabled = true;
@@ -651,14 +652,17 @@
           if (postStarted) {
             try {
               const after = roomRunsFromPayload(await request(`/rooms/${encodeURIComponent(roomId)}/runs`));
+              if (generation !== viewGeneration || roomId !== activeRoomId || viewMode !== "room") return;
               recovery = after;
               recoveredRun = after.find((run) => run.content === content && run.id && !knownIds.has(run.id));
             } catch (_) { recovery = null; }
           }
+          if (generation !== viewGeneration || roomId !== activeRoomId || viewMode !== "room") return;
           if (recoveredRun) {
             messageInput.value = "";
             activeRoomRunId = recoveredRun.id;
             const fullRun = await request(`/runs/${encodeURIComponent(recoveredRun.id)}`).catch(() => recoveredRun);
+            if (generation !== viewGeneration || roomId !== activeRoomId || viewMode !== "room") return;
             roomRuns.push(fullRun);
             renderRoomRuns();
             showRoomRunState(fullRun);
@@ -670,10 +674,11 @@
           }
         } finally {
           roomRunInFlight = false;
-          chatModeButton.disabled = false;
-          roomModeButton.disabled = false;
-          document.getElementById("open-room-button").disabled = false;
+          renderRoomOrder();
           if (generation === viewGeneration) {
+            chatModeButton.disabled = false;
+            roomModeButton.disabled = false;
+            document.getElementById("open-room-button").disabled = false;
             messageInput.disabled = false;
             sendButton.disabled = Boolean(activeRoomRunId) || roomSubmissionUncertain;
             messageInput.focus();

@@ -72,6 +72,7 @@ test("room polling paints final data only while that room view is active", async
     let viewMode = state.mode, activeRoomId = state.room, activeRoomRunId = state.run;
     let viewGeneration = state.generation, roomRuns = state.runs;
     const renderRoomRuns = () => {};
+    const renderRoomOrder = () => {};
     const showRoomRunState = (run) => state.statuses.push(run.status);
     ${monitorSource}
     return { monitor: () => monitorRoomRun("run-a", "room-a", 4), switchView: () => {
@@ -94,6 +95,7 @@ test("a switched room view ignores a late poll response", async () => {
     let viewMode = state.mode, activeRoomId = state.room, activeRoomRunId = state.run;
     let viewGeneration = state.generation, roomRuns = state.runs;
     const renderRoomRuns = () => {};
+    const renderRoomOrder = () => {};
     const showRoomRunState = (run) => state.statuses.push(run.status);
     ${monitorSource}
     return { monitor: () => monitorRoomRun("run-a", "room-a", 4), switchView: () => {
@@ -113,6 +115,7 @@ test("a switched room view ignores a late poll response", async () => {
   assert.deepEqual(state.statuses, []);
 });
 const submitRoomSource = functionSource("submitRoomTask", "");
+const createRoomSource = functionSource("createRoom", "");
 
 test("group task submit ignores a duplicate while its history preflight is pending", async () => {
   let finishPreflight;
@@ -130,9 +133,11 @@ test("group task submit ignores a duplicate while its history preflight is pendi
   const submit = new Function("request", "messageInput", "sendButton", "state", `
     const setStatus = () => {};
     const renderRoomRuns = () => {};
+    const renderRoomOrder = () => {};
     const showRoomRunState = () => {};
     const monitorRoomRun = (...args) => state.monitored.push(args);
     const chatModeButton = {}, roomModeButton = {};
+    const roomCreateButton = {};
     const document = { getElementById: () => ({}) };
     let activeRoomId = "room-1", activeRoomRunId = "", roomRunInFlight = false;
     let roomSubmissionUncertain = false, roomHistoryLoading = false, viewMode = "room", viewGeneration = 1;
@@ -170,9 +175,11 @@ test("preflight adopts the newest queued or running run without posting", async 
   const submit = new Function("request", "messageInput", "sendButton", "state", `
     const setStatus = () => {};
     const renderRoomRuns = () => {};
+    const renderRoomOrder = () => {};
     const showRoomRunState = (run) => { state.active = run.id; };
     const monitorRoomRun = (...args) => state.monitored.push(args);
     const chatModeButton = {}, roomModeButton = {};
+    const roomCreateButton = {};
     const document = { getElementById: () => ({}) };
     let activeRoomId = "room-1", activeRoomRunId = "", roomRunInFlight = false;
     let roomSubmissionUncertain = false, roomHistoryLoading = false, viewMode = "room", viewGeneration = 1;
@@ -187,4 +194,75 @@ test("preflight adopts the newest queued or running run without posting", async 
   assert.equal(state.active, "run-new");
   assert.deepEqual(state.monitored, [["run-new", "room-1", 1]]);
   assert.deepEqual(submit.getRuns().map((run) => run.id), ["run-new"]);
+});
+
+test("room creation is blocked during submit and late recovery cannot write into a switched room", async () => {
+  let rejectPost, finishRecovery, finishDetail;
+  let roomListReads = 0, createCalls = 0;
+  const state = { statuses: [], monitored: [], renders: 0 };
+  const request = (path, options = {}) => {
+    if (path === "/rooms/room-a/runs" && options.method === "POST") {
+      return new Promise((_resolve, reject) => { rejectPost = reject; });
+    }
+    if (path === "/rooms/room-a/runs") {
+      roomListReads += 1;
+      if (roomListReads === 1) return Promise.resolve({ runs: [] });
+      return new Promise((resolve) => { finishRecovery = resolve; });
+    }
+    if (path === "/runs/run-a") return new Promise((resolve) => { finishDetail = resolve; });
+    if (path === "/rooms" && options.method === "POST") {
+      createCalls += 1;
+      return Promise.resolve({ id: "room-b", name: "Room B" });
+    }
+    throw new Error("Unexpected request: " + path);
+  };
+  const messageInput = { value: "Task A", disabled: false, focus() {} };
+  const sendButton = { disabled: false };
+  const roomCreateButton = { disabled: false };
+  const roomModeratorSelect = { value: "agent-a" };
+  const document = { getElementById: (id) => id === "room-name" ? { value: "Room B" } : ({ disabled: false }) };
+  const harness = new Function("request", "messageInput", "sendButton", "roomCreateButton", "roomModeratorSelect", "document", "state", `
+    const setStatus = (message) => state.statuses.push(message);
+    const renderRoomRuns = () => { state.renders += 1; };
+    const showRoomRunState = () => {};
+    const monitorRoomRun = (...args) => state.monitored.push(args);
+    const rememberRoom = () => {};
+    const renderRoomOptions = () => {};
+    const renderRoomOrder = () => {};
+    const orderedRoomAgentIds = () => ["agent-a", "agent-b"];
+    const agents = [];
+    const rooms = [];
+    const chatModeButton = {}, roomModeButton = {};
+    let activeRoomId = "room-a", activeRoomRunId = "", roomRunInFlight = false;
+    let roomHistoryLoading = false, roomSubmissionUncertain = false, roomCreateInFlight = false;
+    let viewMode = "room", viewGeneration = 1, roomRuns = [];
+    ${runListSource}
+    ${submitRoomSource}
+    ${createRoomSource}
+    return {
+      submit: submitRoomTask,
+      create: createRoom,
+      switchToRoomB() { activeRoomId = "room-b"; viewGeneration += 1; messageInput.disabled = false; sendButton.disabled = true; },
+      getRuns: () => roomRuns,
+    };
+  `)(request, messageInput, sendButton, roomCreateButton, roomModeratorSelect, document, state);
+
+  const submission = harness.submit();
+  while (!rejectPost) await new Promise(setImmediate);
+  await harness.create();
+  assert.equal(createCalls, 0, "a room cannot be created during a task submission");
+
+  rejectPost(new Error("response lost"));
+  while (!finishRecovery) await new Promise(setImmediate);
+  finishRecovery({ runs: [{ id: "run-a", content: "Task A", status: "queued" }] });
+  while (!finishDetail) await new Promise(setImmediate);
+  harness.switchToRoomB();
+  const renderCountForRoomB = state.renders;
+  finishDetail({ id: "run-a", content: "Task A", status: "queued", turns: [] });
+  await submission;
+
+  assert.deepEqual(harness.getRuns(), [], "room A recovery must not append into room B");
+  assert.equal(state.renders, renderCountForRoomB, "stale recovery must not repaint room B");
+  assert.equal(messageInput.disabled, false, "stale finally must not change room B composer state");
+  assert.equal(sendButton.disabled, true, "stale finally must preserve room B send state");
 });
