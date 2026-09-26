@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 agent-runtime-login = "agent_runtime_platform.codex_login:main"
+agent-runtime-worker = "agent_runtime_platform.queue_worker:main"
 
 [project.optional-dependencies]
 dev = [

@@ -172,6 +172,45 @@ def create_app(
                 detail={"error": "run_failed", "run_id": exc.run_id},
             ) from exc
 
+    @app.post("/chat/conversations/{conversation_id}/messages/async", status_code=status.HTTP_202_ACCEPTED)
+    def enqueue_human_chat_message(conversation_id: str, request: HumanChatMessageCreate) -> dict:
+        try:
+            result = runtime.send_human_message(conversation_id, request.content, asynchronous=True)
+            return {"id": result["id"], "status": result["status"], "status_url": f"/runs/{result['id']}"}
+        except ConversationNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Conversation not found.") from exc
+        except ConversationConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except AgentNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Agent not found.") from exc
+        except AgentDisabledError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/conversations/{conversation_id}/messages/async", status_code=status.HTTP_202_ACCEPTED)
+    def enqueue_message(conversation_id: str, request: MessageCreate) -> dict:
+        try:
+            result = runtime.send_message(
+                conversation_id=conversation_id,
+                sender_agent_id=request.sender_agent_id,
+                recipient_agent_id=request.recipient_agent_id,
+                recipient_capability=request.recipient_capability,
+                content=request.content,
+                asynchronous=True,
+            )
+            return {"id": result["id"], "status": result["status"], "status_url": f"/runs/{result['id']}"}
+        except ConversationNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Conversation not found.") from exc
+        except AgentCapabilityNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="No enabled agent matches the requested capability.") from exc
+        except AgentAmbiguousError as exc:
+            raise HTTPException(status_code=409, detail="Multiple enabled agents match the requested capability.") from exc
+        except AgentNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="An agent was not found.") from exc
+        except (AgentDisabledError, ConversationConflictError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except InvalidMessageError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.get("/runs/{run_id}")
     def get_run(run_id: str) -> dict:
         run = runtime.get_run(run_id)

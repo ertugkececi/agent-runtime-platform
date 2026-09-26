@@ -1,0 +1,16 @@
+[Unit]
+Description=Agent Runtime Platform persistent queue worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/opc/apps/agent-runtime-platform
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/opc/apps/agent-runtime-platform/.venv/bin/agent-runtime-worker
+Restart=on-failure
+RestartSec=3
+KillMode=mixed
+TimeoutStopSec=300
+
+[Install]
+WantedBy=default.target
