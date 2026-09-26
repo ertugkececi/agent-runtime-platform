@@ -133,6 +133,10 @@ def create_app(
             return room_runtime.enqueue_run(room_id, request.content)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="Room not found.") from exc
+        except AgentNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="A room participant was not found.") from exc
+        except AgentDisabledError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except InvalidMessageError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 

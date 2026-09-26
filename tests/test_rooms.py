@@ -81,7 +81,8 @@ def test_room_run_is_queued_then_runs_in_fixed_order_with_shared_context(tmp_pat
     assert run["final_answer"] == "final summary"
     assert len(provider.calls) == 4
     assert all(call["allow_handoff"] is False for call in provider.calls)
-    assert "Review this design" in provider.calls[0]["history"][0]["content"]
+    assert "Review this design" in provider.calls[0]["history"][-1]["content"]
+    assert "Room task:" in provider.calls[0]["history"][-1]["content"]
     assert "first view" in str(provider.calls[1]["history"])
     assert "first view" in str(provider.calls[2]["history"])
     assert "moderator view" in str(provider.calls[2]["history"])
@@ -134,6 +135,62 @@ def test_room_validation_rejects_duplicate_participants_and_nonparticipant_moder
         "moderator_agent_id": ids[0],
     })
     assert disabled_participant.status_code == 409
+    client.close()
+    app.state.database.dispose()
+
+
+def test_room_run_rejects_participant_disabled_after_room_creation(tmp_path):
+    provider = RoomProvider()
+    _url, app, client, agents = setup_room(tmp_path, provider, count=2)
+    room = client.post("/rooms", json={
+        "name": "Disable race", "participant_agent_ids": [item["id"] for item in agents],
+        "moderator_agent_id": agents[0]["id"],
+    }).json()
+    disabled = client.patch(f"/agents/{agents[1]['id']}", json={"enabled": False})
+    assert disabled.status_code == 200
+
+    rejected = client.post(f"/rooms/{room['id']}/runs", json={"content": "Do not run"})
+    assert rejected.status_code == 409
+    assert "Disabled agents" in rejected.json()["detail"]
+    assert client.get(f"/rooms/{room['id']}/runs").json() == []
+    assert provider.calls == []
+    client.close()
+    app.state.database.dispose()
+
+
+def test_room_run_uses_agent_config_at_enqueue_time(tmp_path):
+    provider = RoomProvider(["first", "second", "summary"])
+    _url, app, client, agents = setup_room(tmp_path, provider, count=2)
+    room = client.post("/rooms", json={
+        "name": "Snapshot timing", "participant_agent_ids": [item["id"] for item in agents],
+        "moderator_agent_id": agents[0]["id"],
+    }).json()
+
+    before_enqueue = client.patch(f"/agents/{agents[0]['id']}", json={
+        "name": "At enqueue", "instructions": "Instructions at enqueue", "model_name": "enqueue-model",
+    })
+    assert before_enqueue.status_code == 200
+    accepted = client.post(f"/rooms/{room['id']}/runs", json={"content": "Snapshot it"})
+    assert accepted.status_code == 202
+    run_id = accepted.json()["id"]
+
+    after_enqueue = client.patch(f"/agents/{agents[0]['id']}", json={
+        "name": "After enqueue", "instructions": "Later instructions", "model_name": "later-model",
+    })
+    assert after_enqueue.status_code == 200
+    assert claim_one(app.state.runtime) == run_id
+    app.state.runtime.execute_queued_run(run_id)
+
+    assert provider.calls[0]["agent"]["name"] == "At enqueue"
+    assert provider.calls[0]["agent"]["instructions"] == "Instructions at enqueue"
+    assert provider.calls[0]["agent"]["model_name"] == "enqueue-model"
+    assert "Room task:" in provider.calls[0]["history"][-1]["content"]
+    completed = client.get(f"/runs/{run_id}").json()
+    assert completed["status"] == "completed"
+    with app.state.database.session() as session:
+        job = session.get(QueueJob, run_id)
+        assert job.status == "completed"
+        assert completed["events"][-1]["type"] == "run_completed"
     client.close()
     app.state.database.dispose()
 
