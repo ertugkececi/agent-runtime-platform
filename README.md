@@ -39,7 +39,7 @@ flowchart TD
 - **Çalışma zamanı:** Tanımı belirli bir sürüm olarak yükler, modeli ve araçları çağırır, sonucu kaydeder.
 - **Yönlendirme:** Mesajı hedef ajana veya yetenek aramasıyla bulunan ajana teslim eder; döngü ve bütçe sınırlarını denetler.
 - **Kayıt katmanı:** Konuşmaları, görevleri, mesajları ve çalıştırma olaylarını kalıcı tutar.
-- **Bağlayıcılar:** Modelleri ve araçları çalışma zamanından ayırır. MCP araç erişimi için, A2A ise ileride uzak ajan sistemleriyle birlikte çalışabilirlik için değerlendirilebilir.
+- **Bağlayıcılar:** Modelleri ve araçları çalışma zamanından ayırır. MCP yerel araç erişimi sağlar; güvenilir uzak hedeflere giden A2A 1.0 görev devri kullanılabilir. Gelen A2A ve çok kullanıcılı kimlik bu güvenlik tasarımından sonraki uygulama işidir.
 
 Yönlendirme, izin ve limit kontrolleri öngörülebilir kurallarla çalışır. Ajanlar kendilerine verilen görev kapsamında içerik üretir ve izin verilen iletişim kararlarını alır.
 
@@ -269,9 +269,10 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 ## Sonraki aşamalar
 
-1. Gelen A2A sunucusu ve çok kullanıcılı kimlik doğrulama için ayrı güvenlik tasarımı.
-2. Yük gerektirirse Redis Streams, NATS veya benzeri dağıtık kuyruk.
-3. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
+1. Gelen A2A ve çok kullanıcılı erişim güvenlik tasarımı tamamlandı: [tasarım ve uygulama dilimleri](docs/inbound-a2a-multiuser-security.md). Bu yalnızca mimari dokümandır; mevcut API hâlâ anonim ve tek kullanıcılıdır. Kimlik doğrulama, sahiplik migrasyonu veya gelen A2A endpoint'i henüz uygulanmadı; internete açmayın.
+2. Dağıtık kuyruk ihtiyacını ölçülen iş hacmi ve işletim gereksinimleriyle değerlendir; Redis Streams, NATS veya benzeri seçenekleri seçmeden önce karar kaydı oluştur. Bu çalışma güvenlik tasarımından sonra gelir.
+3. Kimlik ve sahiplik dilimlerini, test edilebilir kabul ölçütleriyle ayrı uygulama işleri olarak planla; OIDC/PKCE, tenant migration ve authorization tamamlanmadan gelen A2A'yı etkinleştirme.
+4. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
 
 ## Teknoloji yönü
 
