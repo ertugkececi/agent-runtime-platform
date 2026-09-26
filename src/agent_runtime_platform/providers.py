@@ -75,6 +75,10 @@ class OpenAIChatProvider:
                     "\n\nYou may use the handoff_to_agent tool once when a specific subtask "
                     "requires another agent. Do not delegate the entire user request."
                 )
+                remote_caps = sorted(set(agent.get("remote_a2a_capabilities") or []))
+                if remote_caps:
+                    instructions += " Available administrator-configured remote A2A capabilities: " + ", ".join(remote_caps) + ". Use an exact listed capability only when useful."
+
                 model = model.bind_tools([self._HANDOFF_TOOL])
             messages = [("system", instructions)] + [
                 (item["role"], item["content"]) for item in history
@@ -178,6 +182,10 @@ class CodexChatProvider:
                 "a reply. Use empty strings for fields that do not apply. A handoff "
                 "result will be supplied in a later invocation."
             )
+            remote_caps = sorted(set(agent.get("remote_a2a_capabilities") or []))
+            if remote_caps:
+                instructions += " Administrator-configured remote A2A capabilities: " + ", ".join(remote_caps) + "."
+
         prompt = (
             "Here is the conversation history in chronological order as JSON. "
             "Respond to the latest user message; earlier messages are context.\n"

@@ -769,3 +769,239 @@ def test_codex_provider_uses_existing_login_without_api_key_and_bounded_handoff(
     assert calls[0]["ephemeral"] is True
     assert not Path(calls[0]["cwd"]).exists()
     assert "Research this." in calls[0]["prompt"]
+
+
+class _FakeA2AServer:
+    def __init__(self, mode="task", auth=False, bad_origin=False, tenant=None):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        import threading
+        import json
+
+        self.mode = mode
+        self.auth = auth
+        self.bad_origin = bad_origin
+        self.tenant = tenant
+        self.posts = 0
+        self.last_get_query = None
+        owner = self
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args):
+                pass
+            def reply(self, status, data):
+                body = json.dumps(data).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/a2a+json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            def do_GET(self):
+                from urllib.parse import parse_qs, urlsplit
+                parsed = urlsplit(self.path)
+                if parsed.path == "/.well-known/agent-card.json":
+                    owner.reply_card(self)
+                elif parsed.path == "/a2a/tasks/remote-1":
+                    owner.last_get_query = parse_qs(parsed.query)
+                    if owner.mode == "slow":
+                        owner.reply_slow(self)
+                    elif owner.mode == "terminal_message":
+                        self.reply(200, {"id":"remote-1", "status":{"state":"TASK_STATE_COMPLETED",
+                                         "message":{"role":"ROLE_AGENT", "parts":[{"text":"status message result"}]}}})
+                    else:
+                        self.reply(200, {"id":"remote-1", "status":{"state":"TASK_STATE_COMPLETED"},
+                                         "artifacts":[{"parts":[{"text":"remote result"}]}]})
+                else:
+                    self.reply(404, {})
+            def do_POST(self):
+                owner.posts += 1
+                owner.last_headers = dict(self.headers)
+                owner.last_message = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+                if owner.mode == "ambiguous":
+                    self.reply(500, {"error":"simulated lost response"})
+                elif owner.mode == "direct":
+                    self.reply(200, {"message":{"messageId":"reply-1", "role":"ROLE_AGENT",
+                                                "parts":[{"text":"direct result"}]}})
+                else:
+                    self.reply(200, {"task":{"id":"remote-1", "contextId":"ctx-1",
+                                              "status":{"state":"TASK_STATE_WORKING"}}})
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+    def reply_card(self, handler):
+        import json
+        endpoint = self.url + "/a2a"
+        if self.bad_origin:
+            endpoint = endpoint.replace(f":{self.server.server_port}", ":1")
+        interface = {"url":endpoint, "protocolBinding":"HTTP+JSON", "protocolVersion":"1.0"}
+        if self.tenant is not None:
+            interface["tenant"] = self.tenant
+        card = {"name":"Local A2A test", "version":"1.0", "supportedInterfaces":[interface],
+            "skills":[{"id":"research", "name":"Research", "description":"Research tasks", "tags":["research"]}]}
+        if self.auth:
+            card["securitySchemes"] = {"bearerAuth":{"httpAuthSecurityScheme":{"scheme":"Bearer", "bearerFormat":"JWT"}}}
+        body = json.dumps(card).encode()
+        handler.send_response(200); handler.send_header("Content-Type", "application/json")
+        handler.send_header("Content-Length", str(len(body))); handler.end_headers(); handler.wfile.write(body)
+    def reply_slow(self, handler):
+        import json
+        import time
+        body = json.dumps({"id":"remote-1", "status":{"state":"TASK_STATE_WORKING"}, "padding":"x" * 4096}).encode()
+        handler.send_response(200); handler.send_header("Content-Type", "application/a2a+json")
+        handler.send_header("Content-Length", str(len(body))); handler.end_headers()
+        try:
+            for offset in range(0, len(body), 128):
+                handler.wfile.write(body[offset:offset + 128]); handler.wfile.flush(); time.sleep(0.1)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+    def close(self):
+        self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=2)
+
+
+def _enable_a2a(monkeypatch, server, auth=False, max_wait_seconds=2):
+    target = {"id":"local-research", "url":server.url, "allow_private":True,
+        "capabilities":["research"], "max_wait_seconds":max_wait_seconds, "poll_interval_seconds":0.01}
+    if auth:
+        monkeypatch.setenv("A2A_TEST_TOKEN", "secret-a2a-token")
+        target.update({"token_env":"A2A_TEST_TOKEN", "security_scheme":"bearerAuth"})
+    monkeypatch.setenv("AGENT_RUNTIME_A2A_TARGETS", json.dumps([target]))
+
+
+@pytest.mark.parametrize(("mode", "expected"), [("direct", "direct result"), ("task", "remote result"), ("terminal_message", "status message result")])
+def test_human_chat_a2a_delegation_handles_direct_and_task_responses(client_and_provider, monkeypatch, mode, expected):
+    client, provider = client_and_provider
+    server = _FakeA2AServer(mode)
+    try:
+        _enable_a2a(monkeypatch, server)
+        parent = create_agent(client, "Coordinator", "model-parent")
+        conversation = client.post("/chat/conversations", json={"agent_id":parent["id"]}).json()["id"]
+        provider.outputs = [HandoffRequest(capability="research", task="Find a concise answer."), "Here is the answer."]
+        run = client.post(f"/chat/conversations/{conversation}/messages", json={"content":"Research this."}).json()
+        assert run["status"] == "completed"
+        child = run["tasks"][1]
+        assert child["remote_target_id"] == "local-research"
+        assert child["remote_status"] == "completed"
+        assert child["result"] == expected
+        assert child["remote_task_id"] == ("remote-1" if mode in {"task", "terminal_message"} else None)
+        events = [event["type"] for event in run["events"]]
+        assert "a2a_remote_task_status" in events
+        assert server.posts == 1
+        assert server.last_headers["A2A-Version"] == "1.0"
+        assert server.last_headers["Content-Type"] == "application/a2a+json"
+        assert server.last_message["message"]["role"] == "ROLE_USER"
+        assert server.last_message["configuration"]["returnImmediately"] is True
+        assert "research" in provider.calls[0]["agent"]["remote_a2a_capabilities"]
+        discovered = client.get("/a2a/targets").json()
+        assert discovered == [{"id":"local-research", "kind":"a2a", "capabilities":["research"]}]
+        assert server.url not in json.dumps(discovered)
+    finally:
+        server.close()
+
+
+
+
+def test_a2a_v1_propagates_interface_tenant_on_send_and_get_task(client_and_provider, monkeypatch):
+    client, provider = client_and_provider
+    server = _FakeA2AServer("task", tenant="tenant / west")
+    try:
+        _enable_a2a(monkeypatch, server)
+        parent = create_agent(client, "Coordinator", "model-parent")
+        conversation = client.post("/chat/conversations", json={"agent_id":parent["id"]}).json()["id"]
+        provider.outputs = [HandoffRequest(capability="research", task="Use the tenant route."), "Done."]
+        run = client.post(f"/chat/conversations/{conversation}/messages", json={"content":"Research."}).json()
+        assert run["status"] == "completed"
+        assert server.last_message["tenant"] == "tenant / west"
+        assert server.last_get_query == {"tenant":["tenant / west"]}
+    finally:
+        server.close()
+
+
+def test_a2a_poll_deadline_interrupts_a_slow_trickling_response(client_and_provider, monkeypatch):
+    import time
+    client, provider = client_and_provider
+    server = _FakeA2AServer("slow")
+    try:
+        _enable_a2a(monkeypatch, server, max_wait_seconds=1)
+        parent = create_agent(client, "Coordinator", "model-parent")
+        conversation = client.post("/chat/conversations", json={"agent_id":parent["id"]}).json()["id"]
+        provider.outputs = [HandoffRequest(capability="research", task="Wait for the remote task."), "The remote task timed out."]
+        started = time.monotonic()
+        run = client.post(f"/chat/conversations/{conversation}/messages", json={"content":"Research."}).json()
+        elapsed = time.monotonic() - started
+        assert run["status"] == "completed"
+        assert run["tasks"][1]["remote_status"] == "timeout"
+        assert elapsed < 2.0
+    finally:
+        server.close()
+
+
+def test_a2a_v1_bearer_auth_uses_server_environment_and_is_not_exposed(client_and_provider, monkeypatch):
+    client, provider = client_and_provider
+    server = _FakeA2AServer("direct", auth=True)
+    try:
+        _enable_a2a(monkeypatch, server, auth=True)
+        parent = create_agent(client, "Coordinator", "model-parent")
+        conversation = client.post("/chat/conversations", json={"agent_id":parent["id"]}).json()["id"]
+        provider.outputs = [HandoffRequest(capability="research", task="A small research task."), "Done."]
+        run = client.post(f"/chat/conversations/{conversation}/messages", json={"content":"Research."}).json()
+        assert run["status"] == "completed"
+        assert server.last_headers["Authorization"] == "Bearer secret-a2a-token"
+        assert "secret-a2a-token" not in json.dumps(run)
+        assert "secret-a2a-token" not in json.dumps(client.get("/a2a/targets").json())
+    finally:
+        server.close()
+
+
+def test_a2a_card_cannot_redirect_credentials_to_another_origin(client_and_provider, monkeypatch):
+    client, provider = client_and_provider
+    server = _FakeA2AServer("direct", bad_origin=True)
+    try:
+        _enable_a2a(monkeypatch, server)
+        parent = create_agent(client, "Coordinator", "model-parent")
+        conversation = client.post("/chat/conversations", json={"agent_id":parent["id"]}).json()["id"]
+        provider.outputs = [HandoffRequest(capability="research", task="Research."), "Cannot delegate safely."]
+        run = client.post(f"/chat/conversations/{conversation}/messages", json={"content":"Research."}).json()
+        assert run["tasks"][1]["error_code"] == "remote_validation_failed"
+        assert server.posts == 0
+    finally:
+        server.close()
+
+
+def test_ambiguous_a2a_submission_is_not_posted_again_on_retry(client_and_provider, monkeypatch):
+    client, provider = client_and_provider
+    server = _FakeA2AServer("ambiguous")
+    try:
+        _enable_a2a(monkeypatch, server)
+        parent = create_agent(client, "Coordinator", "model-parent")
+        conversation = client.post("/chat/conversations", json={"agent_id":parent["id"]}).json()["id"]
+        request = HandoffRequest(capability="research", task="Create one remote item.")
+        provider.outputs = [request, "The remote submission result is unknown."]
+        run = client.post(f"/chat/conversations/{conversation}/messages", json={"content":"Do this."}).json()
+        child = run["tasks"][1]
+        assert child["remote_status"] == "submission_unknown"
+        assert child["error_code"] == "remote_error"
+        assert server.posts == 1
+        state = {"run_id":run["id"], "history":[]}
+        monkeypatch.setenv("AGENT_RUNTIME_A2A_TARGETS", "[]")
+        replay = client.app.state.runtime._try_a2a_handoff(state, request)
+        assert replay is not None
+        assert client.get(f"/runs/{run['id']}").json()["tasks"][1]["remote_status"] == "submission_unknown"
+
+        changed_server = _FakeA2AServer("direct")
+        try:
+            _enable_a2a(monkeypatch, changed_server)
+            replay = client.app.state.runtime._try_a2a_handoff(state, request)
+            assert replay is not None
+            changed_run = client.get(f"/runs/{run['id']}").json()
+            assert changed_run["tasks"][1]["remote_status"] == "submission_unknown"
+            changed_events = [event for event in changed_run["events"] if event["type"] == "delegated_task_failed"]
+            assert changed_events[-1]["payload"]["remote_status"] == "submission_unknown"
+            assert changed_server.posts == 0
+        finally:
+            changed_server.close()
+
+        _enable_a2a(monkeypatch, server)
+        replay = client.app.state.runtime._try_a2a_handoff(state, request)
+        assert replay is not None
+        assert server.posts == 1
+    finally:
+        server.close()
