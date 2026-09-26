@@ -579,6 +579,10 @@
         }
         roomCreateInFlight = true;
         roomCreateButton.disabled = true;
+        sendButton.disabled = true;
+        chatModeButton.disabled = true;
+        roomModeButton.disabled = true;
+        document.getElementById("open-room-button").disabled = true;
         setStatus("Grup odası oluşturuluyor…");
         try {
           const room = await request("/rooms", {
@@ -598,13 +602,18 @@
         } finally {
           roomCreateInFlight = false;
           renderRoomOrder();
+          chatModeButton.disabled = false;
+          roomModeButton.disabled = false;
+          document.getElementById("open-room-button").disabled = false;
+          sendButton.disabled = viewMode === "room" &&
+            (roomHistoryLoading || Boolean(activeRoomRunId) || roomSubmissionUncertain);
         }
       }
 
       async function submitRoomTask() {
         const content = messageInput.value.trim();
         const roomId = activeRoomId;
-        if (!content || !roomId || activeRoomRunId || roomRunInFlight || roomHistoryLoading || roomSubmissionUncertain) return;
+        if (!content || !roomId || activeRoomRunId || roomRunInFlight || roomCreateInFlight || roomHistoryLoading || roomSubmissionUncertain) return;
         const generation = viewGeneration;
         roomRunInFlight = true;
         roomCreateButton.disabled = true;
@@ -705,7 +714,7 @@
       });
       roomCreateButton.addEventListener("click", () => void createRoom());
       document.getElementById("open-room-button").addEventListener("click", () => {
-        if (!roomSelect.value) return;
+        if (!roomSelect.value || roomCreateInFlight || roomRunInFlight) return;
         activeRoomId = roomSelect.value;
         if (viewMode !== "room") setViewMode("room");
         else {

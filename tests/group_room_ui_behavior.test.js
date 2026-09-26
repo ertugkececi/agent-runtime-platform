@@ -140,7 +140,8 @@ test("group task submit ignores a duplicate while its history preflight is pendi
     const roomCreateButton = {};
     const document = { getElementById: () => ({}) };
     let activeRoomId = "room-1", activeRoomRunId = "", roomRunInFlight = false;
-    let roomSubmissionUncertain = false, roomHistoryLoading = false, viewMode = "room", viewGeneration = 1;
+    let roomSubmissionUncertain = false, roomHistoryLoading = false, roomCreateInFlight = false;
+    let viewMode = "room", viewGeneration = 1;
     let roomRuns = [];
     ${runListSource}
     ${submitRoomSource}
@@ -182,7 +183,8 @@ test("preflight adopts the newest queued or running run without posting", async 
     const roomCreateButton = {};
     const document = { getElementById: () => ({}) };
     let activeRoomId = "room-1", activeRoomRunId = "", roomRunInFlight = false;
-    let roomSubmissionUncertain = false, roomHistoryLoading = false, viewMode = "room", viewGeneration = 1;
+    let roomSubmissionUncertain = false, roomHistoryLoading = false, roomCreateInFlight = false;
+    let viewMode = "room", viewGeneration = 1;
     let roomRuns = [];
     ${runListSource}
     ${submitRoomSource}
@@ -265,4 +267,56 @@ test("room creation is blocked during submit and late recovery cannot write into
   assert.equal(state.renders, renderCountForRoomB, "stale recovery must not repaint room B");
   assert.equal(messageInput.disabled, false, "stale finally must not change room B composer state");
   assert.equal(sendButton.disabled, true, "stale finally must preserve room B send state");
+});
+
+test("submission is blocked while room creation is pending", async () => {
+  let finishCreate;
+  let taskListCalls = 0;
+  const state = { generation: 1, activeRoom: "room-a", mode: "room", loads: [] };
+  const request = (path, options = {}) => {
+    if (path === "/rooms" && options.method === "POST") return new Promise((resolve) => { finishCreate = resolve; });
+    if (path === "/rooms/room-a/runs") { taskListCalls += 1; return Promise.resolve({ runs: [] }); }
+    throw new Error("Unexpected request: " + path);
+  };
+  const messageInput = { value: "Task A", disabled: false, focus() {} };
+  const sendButton = { disabled: false };
+  const roomCreateButton = { disabled: false };
+  const roomModeratorSelect = { value: "agent-a" };
+  const openRoomButton = { disabled: false };
+  const document = { getElementById: (id) => id === "room-name" ? { value: "Room B" } : openRoomButton };
+  const code = [
+    "const setStatus = () => {};",
+    "const renderRoomRuns = () => {};",
+    "const renderRoomOrder = () => {};",
+    "const showRoomRunState = () => {};",
+    "const monitorRoomRun = () => {};",
+    "const rememberRoom = () => {};",
+    "const renderRoomOptions = () => {};",
+    "const orderedRoomAgentIds = () => ['agent-a', 'agent-b'];",
+    "const agents = []; const rooms = [];",
+    "const chatModeButton = {}, roomModeButton = {};",
+    "const roomSelect = { value: '' };",
+    "let activeRoomId = state.activeRoom, activeRoomRunId = '', roomRunInFlight = false;",
+    "let roomHistoryLoading = false, roomSubmissionUncertain = false, roomCreateInFlight = false;",
+    "let viewMode = state.mode, viewGeneration = state.generation, roomRuns = [];",
+    "const loadRoomView = (roomId) => state.loads.push(roomId);",
+    "const setViewMode = (mode) => { viewMode = mode; viewGeneration += 1; };",
+    runListSource, submitRoomSource, createRoomSource,
+    "return { submit: submitRoomTask, create: createRoom };",
+  ].join("\n");
+  const harness = new Function("request", "messageInput", "sendButton", "roomCreateButton", "roomModeratorSelect", "document", "state", code)(
+    request, messageInput, sendButton, roomCreateButton, roomModeratorSelect, document, state,
+  );
+
+  const creation = harness.create();
+  while (!finishCreate) await new Promise(setImmediate);
+  await harness.submit();
+  assert.equal(taskListCalls, 0, "room A task preflight must not start during room creation");
+  assert.equal(sendButton.disabled, true, "send stays disabled while creation owns the view");
+
+  finishCreate({ id: "room-b", name: "Room B" });
+  await creation;
+  assert.deepEqual(state.loads, ["room-b"]);
+  assert.equal(openRoomButton.disabled, false, "open-room control is restored when creation settles");
+  assert.equal(sendButton.disabled, false, "send control is restored after creation opens the new room");
 });
