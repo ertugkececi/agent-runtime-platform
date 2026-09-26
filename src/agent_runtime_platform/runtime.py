@@ -952,7 +952,7 @@ class AgentRuntimeService:
             with self.database.session() as session:
                 child = session.get(Task, child_id); run = session.get(HumanChatRun, run_id)
                 child.status = "failed"; child.error_code = "remote_error"
-                child.remote_status = code if child.remote_task_id else "submission_unknown"
+                child.remote_status = ("timeout" if code == "task_timeout" else code) if child.remote_task_id else "submission_unknown"
                 child.completed_at = datetime.now(timezone.utc)
                 _append_human_chat_event(session, run, "delegated_task_failed", {"task_id": child.id, "error_code": child.error_code, "remote_message_id": child.remote_message_id, "remote_task_id": child.remote_task_id, "remote_status": child.remote_status})
                 session.commit()

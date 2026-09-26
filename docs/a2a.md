@@ -30,7 +30,7 @@ Use an HTTPS `url` in production. For a Tailscale/private target or local test f
 
 ## Wire behavior
 
-The client sends a plain text user `Message` to `POST {interface-url}/message:send` with `Content-Type: application/a2a+json`, `A2A-Version: 1.0`, a persisted stable `messageId`, `role: "ROLE_USER"`, and `parts: [{"text": ...}]`. A direct `message` response is returned as untrusted text. A `task` response persists its remote id before polling `GET {interface-url}/tasks/{id}`. Working state updates, terminal status, errors, remote ids, and result are attached to the local delegated task and human-chat run events. Only text parts from messages/artifacts are consumed; binary and structured parts are ignored.
+The client sends a plain text user `Message` to `POST {interface-url}/message:send` with `Content-Type: application/a2a+json`, `A2A-Version: 1.0`, a persisted stable `messageId`, `role: "ROLE_USER"`, and `parts: [{"text": ...}]`. A direct `message` response is returned as untrusted text. A `task` response persists its remote id before polling `GET {interface-url}/tasks/{id}`. If the selected AgentInterface declares a `tenant`, it is included in the SendMessageRequest body and URL-encoded as the GetTask `tenant` query parameter. Working state updates, terminal status, errors, remote ids, and result are attached to the local delegated task and human-chat run events. Only text parts from messages/artifacts are consumed; binary and structured parts are ignored.
 
 Requests have finite timeouts, bounded polling, no redirects, and a 1 MiB response cap. Agent Card interface URLs and task polling use the administrator-approved origin. URLs supplied by model output are never used.
 

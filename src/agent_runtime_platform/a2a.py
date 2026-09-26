@@ -1,9 +1,11 @@
 """Small, fail-closed A2A v1 HTTP+JSON client for admin-trusted targets."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import socket
 import time
@@ -63,7 +65,7 @@ def configured_targets() -> list[dict]:
                                                 ("poll_interval_seconds", 1.0, 0.05, 10.0)):
             try:
                 value = float(item.get(key, default))
-                if not value == value or value in (float("inf"), float("-inf")):
+                if not math.isfinite(value):
                     raise ValueError
             except (TypeError, ValueError) as exc:
                 raise A2AError("invalid_admin_configuration") from exc
@@ -124,18 +126,21 @@ def _status(task: dict) -> str:
 
 
 class A2AClient:
-    def __init__(self, target: dict, *, client: httpx.Client | None = None) -> None:
+    def __init__(self, target: dict) -> None:
         self.target = target
-        self.client = client or httpx.Client(timeout=float(target.get("request_timeout_seconds", 10)), follow_redirects=False, trust_env=False)
-        self.owns_client = client is None
+        request_timeout = float(target.get("request_timeout_seconds", 10))
+        if not math.isfinite(request_timeout):
+            raise A2AError("invalid_admin_configuration")
+        self.request_timeout = min(max(request_timeout, 0.1), 30.0)
         self.origin = _origin(urlparse(target["url"]))
         self.host = _validate_url(target["url"], allow_private=target["allow_private"], expected_origin=self.origin)
         self._card: dict | None = None
         self._endpoint: str | None = None
+        self._tenant: str | None = None
 
     def close(self) -> None:
-        if self.owns_client:
-            self.client.close()
+        # Each bounded async request owns and closes its HTTPX client.
+        return None
 
     def _headers(self) -> dict[str, str]:
         headers = {"Accept": "application/a2a+json, application/json", "A2A-Version": "1.0"}
@@ -147,20 +152,54 @@ class A2AClient:
             headers["Authorization"] = f"Bearer {token}"
         return headers
 
-    def _json(self, method: str, url: str, *, headers: dict, json_body: dict | None = None) -> dict:
+    def _json(
+        self, method: str, url: str, *, headers: dict,
+        json_body: dict | None = None, params: dict[str, str] | None = None,
+        deadline: float | None = None,
+    ) -> dict:
         try:
-            with self.client.stream(method, url, headers=headers, json=json_body) as response:
-                response.raise_for_status()
-                data = bytearray()
-                for chunk in response.iter_bytes():
-                    data.extend(chunk)
-                    if len(data) > 1_048_576:
-                        raise A2AError("remote_response_too_large")
-                result = json.loads(data)
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise A2AError("sync_call_required")
+        absolute_deadline = min(deadline or float("inf"), time.monotonic() + self.request_timeout)
+        try:
+            return asyncio.run(self._json_async(
+                method, url, headers=headers, json_body=json_body, params=params,
+                deadline=absolute_deadline,
+            ))
+        except TimeoutError as exc:
+            raise A2AError("operation_deadline_exceeded") from exc
         except A2AError:
             raise
         except Exception as exc:
             raise A2AError("remote_request_failed") from exc
+
+    async def _json_async(
+        self, method: str, url: str, *, headers: dict,
+        json_body: dict | None, params: dict[str, str] | None, deadline: float,
+    ) -> dict:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise A2AError("operation_deadline_exceeded")
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(remaining), follow_redirects=False, trust_env=False,
+        ) as client:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise A2AError("operation_deadline_exceeded")
+            async with asyncio.timeout(remaining):
+                async with client.stream(
+                    method, url, headers=headers, json=json_body, params=params,
+                ) as response:
+                    response.raise_for_status()
+                    data = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        data.extend(chunk)
+                        if len(data) > 1_048_576:
+                            raise A2AError("remote_response_too_large")
+                    result = json.loads(data)
         if not isinstance(result, dict):
             raise A2AError("invalid_remote_response")
         return result
@@ -185,6 +224,9 @@ class A2AClient:
             raise A2AError("unsupported_agent_card")
         endpoint = interface["url"]
         _validate_url(endpoint, allow_private=self.target["allow_private"], expected_origin=self.origin)
+        tenant = interface.get("tenant")
+        if tenant is not None and (not isinstance(tenant, str) or len(tenant) > 1024):
+            raise A2AError("unsupported_agent_card")
         skills = card.get("skills", [])
         card_caps = set()
         if isinstance(skills, list):
@@ -211,7 +253,7 @@ class A2AClient:
                                        and selected in req["schemes"] and len(req["schemes"]) == 1
                                        for req in requirements):
                 raise A2AError("unsupported_authentication")
-        self._card, self._endpoint = card, endpoint.rstrip("/")
+        self._card, self._endpoint, self._tenant = card, endpoint.rstrip("/"), tenant
 
     def send_or_poll(self, capability: str, objective: str, message_id: str,
                      remote_task_id: str | None, *, on_remote_task, on_status) -> str:
@@ -225,6 +267,7 @@ class A2AClient:
             body = self._json("POST", self._endpoint + "/message:send",
                 headers={**headers, "Content-Type": "application/a2a+json"}, json_body={
                     "message": {"messageId": message_id, "role": "ROLE_USER", "parts": [{"text": objective}]},
+                    **({"tenant": self._tenant} if self._tenant is not None else {}),
                     "configuration": {"acceptedOutputModes": ["text/plain"], "historyLength": 0, "returnImmediately": True},
                 })
         except Exception as exc:
@@ -258,9 +301,20 @@ class A2AClient:
         deadline = time.monotonic() + max_wait
         while time.monotonic() < deadline:
             try:
-                task = self._json("GET", self._endpoint + "/tasks/" + quote(task_id, safe=""), headers=headers)
-            except Exception as exc:
+                task = self._json(
+                    "GET", self._endpoint + "/tasks/" + quote(task_id, safe=""),
+                    headers=headers,
+                    params={"tenant": self._tenant} if self._tenant is not None else None,
+                    deadline=deadline,
+                )
+            except A2AError as exc:
+                if exc.code == "operation_deadline_exceeded" and time.monotonic() >= deadline:
+                    on_status("timeout", task_id)
+                    raise A2AError("task_timeout") from exc
                 raise A2AError("task_poll_failed") from exc
+            if time.monotonic() >= deadline:
+                on_status("timeout", task_id)
+                raise A2AError("task_timeout")
             if not isinstance(task, dict) or task.get("id") != task_id:
                 raise A2AError("invalid_remote_response")
             state = _status(task)
@@ -269,7 +323,8 @@ class A2AClient:
                 if state != "completed":
                     raise A2AError("remote_task_" + state)
                 artifacts = task.get("artifacts", [])
-                return "\n".join(_extract_text(x) for x in artifacts if isinstance(x, dict))[:100_000]
+                artifact_text = "\n".join(_extract_text(x) for x in artifacts if isinstance(x, dict))[:100_000]
+                return artifact_text or _extract_text(task.get("status", {}).get("message", {}))
             time.sleep(min(interval, max(0, deadline - time.monotonic())))
         on_status("timeout", task_id)
         raise A2AError("task_timeout")
