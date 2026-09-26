@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
 
 from agent_runtime_platform.database import Database
+from agent_runtime_platform.auth import AuthMiddleware, OIDCAuth, OIDCConfig, install_auth_routes
 from agent_runtime_platform.a2a import A2AError, configured_targets
 from agent_runtime_platform.providers import ProviderRegistry, list_codex_models
 from agent_runtime_platform.mcp_tools import MCPConfigurationError, public_tool_catalog
@@ -41,6 +42,8 @@ def create_app(
 ) -> FastAPI:
     load_dotenv(override=False)
     database = Database(database_url or os.getenv("AGENT_RUNTIME_DATABASE_URL", "sqlite:///./data/agent_runtime.db"))
+    auth_config = OIDCConfig.from_environment()
+    auth = OIDCAuth(auth_config, database) if auth_config else None
     provider_registry = providers or ProviderRegistry()
     runtime = AgentRuntimeService(database, provider_registry)
     room_runtime = RoomRuntimeService(database, provider_registry)
@@ -52,6 +55,9 @@ def create_app(
     )
     app.state.database = database
     app.state.runtime = runtime
+    app.state.auth = auth
+    app.add_middleware(AuthMiddleware, auth=auth)
+    install_auth_routes(app, auth)
 
     @app.get("/", include_in_schema=False)
     def chat_ui() -> FileResponse:

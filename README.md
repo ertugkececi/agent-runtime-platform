@@ -241,7 +241,25 @@ sudo tailscale serve status
 
 İşçi, `agent-runtime-worker.service` systemd kullanıcı servisi olarak API'den ayrı çalışır. SQLite `queue_jobs` tablosu ilk veritabanı açılışında eklenir; mevcut veriler için yeniden oluşturma veya silme yapılmaz. Veritabanı başına işletim sistemi kilidi ikinci bir yerel worker'ın işleri sahiplenmesini veya toparlamasını engeller. Systemd durdurma isteğinde `KillMode=mixed` önce yalnızca worker ana sürecine sinyal gönderir; worker yeni iş almayı bırakıp o anki model çağrısının bitmesini en fazla 300 saniye bekler, zaman aşımında süreç grubu sonlandırılır. Ani kapanma/sert sonlandırma yarım kalan bir denemeyi tüketir; başlangıçta toparlanan işler toplamda en fazla üç denemeyle sıraya alınır. Model çağrısı tekrar çalıştırılabilir ve model/gelecekteki araç yan etkileri tam olarak bir kez garantili değildir. Çalıştırma başına kullanıcıya görünen yanıt ve devredilmiş alt görev kaydı yinelenmeye karşı korunur; tekrar denemede ilk kaydedilmiş devir hedefi ve amacı kullanılır. Başarısız işler `failed` durumuna geçer.
 
-Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama ve çok kullanıcılı erişim bu dilimde yoktur.
+Web arayüzü yerel ve tek kullanıcılı kullanım içindir. Uygulama kimlik doğrulaması varsayılan olarak kapalıdır; tek legacy kullanıcı için OIDC kapısı kurulum başına açıkça etkinleştirilebilir. Bu kapı veri sahipliği veya tenant izolasyonu sağlamaz; tenant migration ve kaynak yetkilendirme tamamlanmadan çok kullanıcılı ya da genel internet erişimine açmayın.
+
+#### İsteğe bağlı OIDC tek kullanıcı kapısı
+
+Varsayılan `AGENT_RUNTIME_AUTH_MODE=off` mevcut yerel/tek kullanıcılı davranışı korur. OIDC yalnız uygulama tek API süreci çalıştırırken, operatörün sabit issuer'ı, client ID'si, HTTPS callback adresi ve mevcut tek kullanıcının değişmez `sub` değeri sağlandığında etkinleştirilir. `.env` dosyasında (veya deployment secret/config kaynağında) aşağıdaki değerleri ayarlayın; gerçek değerleri git'e eklemeyin:
+
+```dotenv
+AGENT_RUNTIME_AUTH_MODE=oidc
+AGENT_RUNTIME_OIDC_ISSUER=https://id.example.com/issuer
+AGENT_RUNTIME_OIDC_CLIENT_ID=agent-runtime
+AGENT_RUNTIME_OIDC_REDIRECT_URI=https://runtime.example.com/auth/callback
+AGENT_RUNTIME_OIDC_LEGACY_SUB=the-exact-existing-operator-subject
+AGENT_RUNTIME_OIDC_LEGACY_TENANT=legacy
+AGENT_RUNTIME_OIDC_SESSION_TTL_SECONDS=28800
+```
+
+Provider, Authorization Code + PKCE S256, `openid` scope ve ID token'ı desteklemelidir. Discovery/token/JWKS uçları aynı sabit issuer origin'inde olmalı; otomatik HTTP yönlendirmeleri izlenmez. Üretimde callback HTTPS olmalıdır. OIDC kapısı yalnız yapılandırılmış `iss/sub` kimliğine session açar; ikinci bir kişi, Authorization bearer/M2M çağrısı ve anonim iş API'si reddedilir. OIDC açıkken `/docs`, `/redoc` ve `/openapi.json` kapalıdır. Giriş sonrası cookie host-only, Secure, HttpOnly ve SameSite=Lax'tır; uygulama oturumu sunucu tarafında tutar ve durum değiştiren isteklerde session'a bağlı CSRF başlığı ile tam Origin eşleşmesi ister. `GET /auth/session` arayüzün CSRF başlığını bellekte hazırlamasını sağlar; `POST /auth/logout` oturumu iptal eder.
+
+Bu ilk dilim mevcut kayıtları bir kullanıcıya migrate etmez ve endpoint'lere owner/tenant filtresi eklemez. Kapatmak için `AGENT_RUNTIME_AUTH_MODE=off` yapıp API sürecini yeniden başlatın; oturum tablosu yalnızca yeni `auth_sessions` tablosudur ve mevcut tablolara kolon eklenmez. Dağıtımdan önce SQLite için tutarlı yedek alın. Tüm kimlik yapılandırması ve OIDC gerçek sağlayıcıyla doğrulanmadan genel ağ erişimi açmayın.
 
 İstek gövdesi ve hata biçimleri için `/docs` içindeki OpenAPI arayüzünü kullanın. `codex` sağlayıcısı resmî Codex SDK üzerinden sunucudaki mevcut ChatGPT oturumunu kullanır; API anahtarı gerekmez. Ajan çağrıları salt okunur sandbox içinde, komut ve web araçları kapalı olarak yürütülür. Codex kullanım limitleri ChatGPT planına bağlıdır. Eski `openai` sağlayıcısını özellikle seçerseniz ayrıca `OPENAI_API_KEY` ayarlamanız ve API kullanımını karşılamanız gerekir. Testler hiçbir canlı model servisine bağlanmaz.
 
@@ -258,6 +276,7 @@ Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama 
 | Kalıcı arka plan kuyruğu | Yeni async API uçları ve ayrı tek sunucu işçisi kullanılabilir; sınırlı yeniden deneme ve başlangıç toparlaması uygulanır. |
 | Grup odası | 2–5 kayıtlı ajan açık sırayla bir tur katkı verir; seçilen moderatör katkılardan tek bir son yanıt üretir. Kuyruk ve çalışma izi kalıcıdır. |
 | Görev devri | İnsan-ajan sohbetinde en fazla bir alt görev tek yerel veya güvenilir A2A ajanına devredilir; üst/alt görev ilişkisi, hedef anlık görüntüsü, uzak kimlik/durum, sonuç ve olay izi saklanır. |
+| Auth/principal | Varsayılan kapalı, tek sabit OIDC legacy kimliğine sahip server session + CSRF kapısı; tenant/owner authorization yok. |
 
 ### Giden A2A devri
 
@@ -269,8 +288,8 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 ## Sonraki aşamalar
 
-1. [Gelen A2A ve çok kullanıcılı erişim güvenlik tasarımının](docs/inbound-a2a-multiuser-security.md) ilk uygulama dilimi olan **Auth/principal**: OIDC sunucu tarafı giriş/callback/çıkış, oturum, CSRF koruması ve principal/scope yönetimi. Tasarım hâlâ yalnızca mimari dokümandır; mevcut API anonim ve tek kullanıcılıdır. Kimlik doğrulama, sahiplik migrasyonu veya gelen A2A endpoint'i henüz uygulanmadı; internete açmayın.
-2. Tenant migration ve kaynak yetkilendirme dilimlerini test edilebilir kabul ölçütleriyle ayrı uygulama işleri olarak sürdür; gerekli güvenlik kontrolleri tamamlanmadan gelen A2A'yı etkinleştirme.
+1. Auth/principal dilimi (#32): varsayılan kapalı OIDC PKCE login, sabit tek legacy `iss/sub`, server session ve CSRF kapısı. Bu, çok kullanıcılı erişim değildir ve tenant/resource izolasyonu içermez.
+2. Tenant migration ve owner bazlı kaynak yetkilendirmeyi ayrı güvenlik dilimleri olarak tamamla; bu kontroller bitmeden gelen A2A'yı ve genel internet erişimini etkinleştirme.
 3. Dağıtık kuyruk kararını yalnızca ölçümler veya açık bir çok-host/yüksek erişilebilirlik gereksinimi mevcut tasarımı yetersiz kıldığında yeniden değerlendir: [karar ve ölçüm kapısı](docs/queue-scaling-decision.md).
 4. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
 
@@ -280,4 +299,4 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olur. Yerel tek kullanıcılı sohbet arayüzü ve tek sunuculu kalıcı görev kuyruğu kullanılabilir; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir.
 
-Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve oda oluşturma/geçmiş/çalıştırma izleme arayüzüyle sınırlı grup odası sunar. MCP salt okunur araç dilimi ve güvenilir hedeflere giden A2A 1.0 dilimi tamamlandı. Çok kullanıcılı erişim ve kimlik doğrulama daha sonraki kapsamdadır; dağıtık kuyruk ancak ölçülen yük bunu gerektirirse ele alınır.
+Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve oda oluşturma/geçmiş/çalıştırma izleme arayüzüyle sınırlı grup odası sunar. MCP salt okunur araç dilimi ve güvenilir hedeflere giden A2A 1.0 dilimi tamamlandı. Auth/principal ilk dilimi varsayılan kapalı tek-kullanıcı OIDC kapısıdır; tenant migration ve resource authorization henüz gereklidir. Dağıtık kuyruk ancak ölçülen yük bunu gerektirirse ele alınır.
