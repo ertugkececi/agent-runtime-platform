@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import threading
 import time
 from dataclasses import replace
@@ -347,3 +348,44 @@ def test_authenticated_browser_can_send_human_chat_message_and_ui_uses_csrf(oidc
     assert message.json()["messages"][-1]["content"] == "Authenticated response"
     page = client.get("/").text
     assert "initializeAuth" in page and "X-CSRF-Token" in page and "/auth/login" in page
+
+
+def test_unauthenticated_shell_computes_hidden_over_layout_grid_rule(oidc_runtime):
+    client, _issuer = oidc_runtime
+    html = client.get("/").text
+    stylesheet = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    rules = []
+    for selector_text, declaration_text in re.findall(r"([^{}]+)\{([^{}]*)\}", stylesheet):
+        declarations = {}
+        for declaration in declaration_text.split(";"):
+            if ":" not in declaration:
+                continue
+            property_name, value = declaration.split(":", 1)
+            property_name = property_name.strip()
+            value = value.strip()
+            important = value.endswith("!important")
+            declarations[property_name] = (value.removesuffix("!important").strip(), important)
+        rules.append((selector_text.strip(), declarations))
+
+    display_candidates = []
+    for selector, declarations in rules:
+        if selector not in {".layout", "[hidden]"} or "display" not in declarations:
+            continue
+        value, important = declarations["display"]
+        specificity = 1 if selector in {".layout", "[hidden]"} else 0
+        display_candidates.append(((important, specificity), value))
+    assert (False, "grid") in [(important, value) for (important, _specificity), value in display_candidates]
+    assert max(display_candidates, key=lambda candidate: candidate[0])[1] == "none"
+
+    # The logged-out branch hides the grid shell and reveals only the sign-in panel.
+    assert 'document.querySelector("main.layout").hidden = true' in html
+    assert 'document.getElementById("login-required").hidden = false' in html
+    assert 'document.getElementById("login-link").hidden = false' in html
+
+
+def test_client_id_only_change_keeps_current_session_until_logout(oidc_runtime):
+    client, issuer = oidc_runtime
+    params = start_login(client)
+    assert finish_login(client, issuer, params).status_code == 303
+    client.app.state.auth.config = replace(client.app.state.auth.config, client_id="rotated-client-id")
+    assert client.get("/agents").status_code == 200
