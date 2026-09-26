@@ -864,6 +864,7 @@ def test_human_chat_a2a_delegation_handles_direct_and_task_responses(client_and_
         assert server.last_headers["A2A-Version"] == "1.0"
         assert server.last_headers["Content-Type"] == "application/a2a+json"
         assert server.last_message["message"]["role"] == "ROLE_USER"
+        assert server.last_message["configuration"]["returnImmediately"] is True
         assert "research" in provider.calls[0]["agent"]["remote_a2a_capabilities"]
         discovered = client.get("/a2a/targets").json()
         assert discovered == [{"id":"local-research", "kind":"a2a", "capabilities":["research"]}]
@@ -919,9 +920,27 @@ def test_ambiguous_a2a_submission_is_not_posted_again_on_retry(client_and_provid
         assert child["remote_status"] == "submission_unknown"
         assert child["error_code"] == "remote_error"
         assert server.posts == 1
-        replay = client.app.state.runtime._try_a2a_handoff(
-            {"run_id":run["id"], "history":[]}, request
-        )
+        state = {"run_id":run["id"], "history":[]}
+        monkeypatch.setenv("AGENT_RUNTIME_A2A_TARGETS", "[]")
+        replay = client.app.state.runtime._try_a2a_handoff(state, request)
+        assert replay is not None
+        assert client.get(f"/runs/{run['id']}").json()["tasks"][1]["remote_status"] == "submission_unknown"
+
+        changed_server = _FakeA2AServer("direct")
+        try:
+            _enable_a2a(monkeypatch, changed_server)
+            replay = client.app.state.runtime._try_a2a_handoff(state, request)
+            assert replay is not None
+            changed_run = client.get(f"/runs/{run['id']}").json()
+            assert changed_run["tasks"][1]["remote_status"] == "submission_unknown"
+            changed_events = [event for event in changed_run["events"] if event["type"] == "delegated_task_failed"]
+            assert changed_events[-1]["payload"]["remote_status"] == "submission_unknown"
+            assert changed_server.posts == 0
+        finally:
+            changed_server.close()
+
+        _enable_a2a(monkeypatch, server)
+        replay = client.app.state.runtime._try_a2a_handoff(state, request)
         assert replay is not None
         assert server.posts == 1
     finally:

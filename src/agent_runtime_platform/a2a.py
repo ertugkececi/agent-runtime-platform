@@ -225,7 +225,7 @@ class A2AClient:
             body = self._json("POST", self._endpoint + "/message:send",
                 headers={**headers, "Content-Type": "application/a2a+json"}, json_body={
                     "message": {"messageId": message_id, "role": "ROLE_USER", "parts": [{"text": objective}]},
-                    "configuration": {"acceptedOutputModes": ["text/plain"], "historyLength": 0},
+                    "configuration": {"acceptedOutputModes": ["text/plain"], "historyLength": 0, "returnImmediately": True},
                 })
         except Exception as exc:
             raise A2AError("submission_unknown", ambiguous=True) from exc

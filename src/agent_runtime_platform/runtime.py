@@ -839,15 +839,23 @@ class AgentRuntimeService:
                 if target is None:
                     failure = "remote_target_unavailable"
                     child.status = "failed"; child.error_code = failure
-                    child.remote_status = failure; child.completed_at = datetime.now(timezone.utc)
-                    _append_human_chat_event(session, chat_run, "delegated_task_failed", {"task_id": child.id, "error_code": failure, "remote_status": failure})
+                    ambiguous_send = child.remote_task_id is None and child.remote_status in {
+                        "submitting", "submission_unknown", "completed"
+                    }
+                    child.remote_status = "submission_unknown" if ambiguous_send else failure
+                    child.completed_at = datetime.now(timezone.utc)
+                    _append_human_chat_event(session, chat_run, "delegated_task_failed", {"task_id": child.id, "error_code": failure, "remote_status": child.remote_status})
                     session.commit()
                     return self._a2a_result_history(history, request, child, child.config_snapshot, None, failure)
                 if child.config_snapshot.get("target_fingerprint") != target_fingerprint(target):
                     failure = "remote_target_changed"
                     child.status = "failed"; child.error_code = failure
-                    child.remote_status = failure; child.completed_at = datetime.now(timezone.utc)
-                    _append_human_chat_event(session, chat_run, "delegated_task_failed", {"task_id": child.id, "error_code": failure, "remote_status": failure})
+                    ambiguous_send = child.remote_task_id is None and child.remote_status in {
+                        "submitting", "submission_unknown", "completed"
+                    }
+                    child.remote_status = "submission_unknown" if ambiguous_send else failure
+                    child.completed_at = datetime.now(timezone.utc)
+                    _append_human_chat_event(session, chat_run, "delegated_task_failed", {"task_id": child.id, "error_code": failure, "remote_status": child.remote_status})
                     session.commit()
                     return self._a2a_result_history(history, request, child, child.config_snapshot, None, failure)
                 request = HandoffRequest(capability=child.capability or request.capability, task=child.objective)
