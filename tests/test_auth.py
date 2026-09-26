@@ -4,6 +4,7 @@ import base64
 import json
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -14,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from agent_runtime_platform.api import create_app
+from agent_runtime_platform.providers import ProviderRegistry
 from agent_runtime_platform.models import AuthSession
 
 
@@ -49,6 +51,7 @@ class FakeOIDCIssuer:
                         "authorization_endpoint": issuer.url + "/authorize",
                         "token_endpoint": issuer.url + "/token",
                         "jwks_uri": issuer.url + "/jwks",
+                        "token_endpoint_auth_methods_supported": ["none"],
                     })
                 elif self.path == "/jwks":
                     numbers = issuer.good_key.public_key().public_numbers()
@@ -81,6 +84,10 @@ class FakeOIDCIssuer:
                 if issuer.variant == "audience": claims["aud"] = "other-client"
                 if issuer.variant == "expired": claims["exp"] = now - 300
                 if issuer.variant == "subject": claims["sub"] = "another-person"
+                if issuer.variant == "azp_wrong": claims["azp"] = "other-client"
+                if issuer.variant == "multi_no_azp": claims["aud"] = ["runtime-client", "other-client"]
+                if issuer.variant == "multi_wrong": claims["aud"] = ["runtime-client", "other-client"]; claims["azp"] = "other-client"
+                if issuer.variant == "multi_valid": claims["aud"] = ["runtime-client", "other-client"]; claims["azp"] = "runtime-client"
                 state = form.get("state", [None])[0]
                 claims["nonce"] = issuer.expected_nonce
                 if issuer.variant == "nonce": claims["nonce"] = "wrong-nonce"
@@ -101,6 +108,11 @@ class FakeOIDCIssuer:
         self.thread.join(timeout=2)
 
 
+class FakeAuthProvider:
+    def generate(self, agent, history, *, allow_handoff=False):
+        return "Authenticated response"
+
+
 @pytest.fixture
 def oidc_runtime(monkeypatch):
     issuer = FakeOIDCIssuer()
@@ -109,7 +121,7 @@ def oidc_runtime(monkeypatch):
     monkeypatch.setenv("AGENT_RUNTIME_OIDC_CLIENT_ID", "runtime-client")
     monkeypatch.setenv("AGENT_RUNTIME_OIDC_REDIRECT_URI", "https://testserver/auth/callback")
     monkeypatch.setenv("AGENT_RUNTIME_OIDC_LEGACY_SUB", "legacy-operator")
-    app = create_app(database_url="sqlite:///:memory:")
+    app = create_app(database_url="sqlite:///:memory:", providers=ProviderRegistry({"openai": FakeAuthProvider()}))
     with TestClient(app, base_url="https://testserver", follow_redirects=False) as client:
         yield client, issuer
     app.state.database.dispose()
@@ -182,7 +194,7 @@ def test_open_protected_route_denial_docs_hidden_and_public_health(oidc_runtime)
     assert client.get("/openapi.json").status_code == 404
 
 
-@pytest.mark.parametrize("variant", ["issuer", "audience", "signature", "nonce", "expired", "subject"])
+@pytest.mark.parametrize("variant", ["issuer", "audience", "signature", "nonce", "expired", "subject", "azp_wrong", "multi_no_azp", "multi_wrong"])
 def test_oidc_rejects_invalid_claims_and_signatures(oidc_runtime, variant):
     client, issuer = oidc_runtime
     issuer.variant = variant
@@ -242,3 +254,96 @@ def test_callback_state_is_bound_to_the_browser_that_started_login(oidc_runtime)
     # A failed cross-browser attempt does not burn the legitimate browser's state.
     legitimate = finish_login(client, issuer, params, code="cross-browser-code")
     assert legitimate.status_code == 303
+
+
+def test_multiple_pending_login_flows_do_not_break_expiry_cleanup(oidc_runtime):
+    client, issuer = oidc_runtime
+    first = start_login(client)
+    second = start_login(client)
+    assert finish_login(client, issuer, first, code="first-pending-code").status_code == 303
+    assert finish_login(client, issuer, second, code="second-pending-code").status_code == 303
+
+
+def test_multi_audience_requires_and_accepts_matching_authorized_party(oidc_runtime):
+    client, issuer = oidc_runtime
+    issuer.variant = "multi_valid"
+    params = start_login(client)
+    assert finish_login(client, issuer, params, code="multi-audience-code").status_code == 303
+
+
+def test_pending_flow_expiry_cleanup_and_two_pending_starts(oidc_runtime):
+    from agent_runtime_platform.auth import LoginFlow
+
+    client, issuer = oidc_runtime
+    auth = client.app.state.auth
+    auth._flows["expired-flow"] = LoginFlow("n", "v", "binding", time.time() - 1)
+    first = start_login(client)
+    second = start_login(client)
+    assert "expired-flow" not in auth._flows
+    assert finish_login(client, issuer, first, code="pending-one").status_code == 303
+    assert finish_login(client, issuer, second, code="pending-two").status_code == 303
+
+
+def test_origin_formats_dns_ports_and_ipv6():
+    from agent_runtime_platform.auth import _origin
+
+    assert _origin("https://app.example.test:8443/auth/callback") == "https://app.example.test:8443"
+    assert _origin("https://[::1]:8443/auth/callback") == "https://[::1]:8443"
+    assert _origin("https://app.example.test/auth/callback") == "https://app.example.test"
+
+
+@pytest.mark.parametrize("field,value", [("legacy_subject", "changed-sub"), ("issuer", "https://other.example"), ("tenant_id", "changed-tenant")])
+def test_saved_sessions_stop_authenticating_after_bootstrap_config_changes(oidc_runtime, field, value):
+    client, issuer = oidc_runtime
+    params = start_login(client)
+    assert finish_login(client, issuer, params).status_code == 303
+    client.app.state.auth.config = replace(client.app.state.auth.config, **{field: value})
+    assert client.get("/agents").status_code == 401
+    assert client.get("/auth/session").json()["authenticated"] is False
+
+
+def test_successful_relogin_revokes_old_session_but_failed_relogin_preserves_it(oidc_runtime):
+    client, issuer = oidc_runtime
+    first = start_login(client)
+    assert finish_login(client, issuer, first, code="initial-session").status_code == 303
+    old_session = client.cookies.get("__Host-agent_runtime_session")
+    assert client.get("/agents").status_code == 200
+
+    issuer.variant = "subject"
+    failed = start_login(client)
+    assert finish_login(client, issuer, failed, code="failed-relogin").status_code == 403
+    assert client.cookies.get("__Host-agent_runtime_session") == old_session
+    assert client.get("/agents").status_code == 200
+
+    issuer.variant = "valid"
+    second = start_login(client)
+    assert finish_login(client, issuer, second, code="successful-relogin").status_code == 303
+    new_session = client.cookies.get("__Host-agent_runtime_session")
+    assert new_session and new_session != old_session
+    assert client.get("/agents").status_code == 200
+    old_browser = TestClient(client.app, base_url="https://testserver", follow_redirects=False)
+    old_browser.cookies.set("__Host-agent_runtime_session", old_session)
+    assert old_browser.get("/agents").status_code == 401
+    new_browser = TestClient(client.app, base_url="https://testserver", follow_redirects=False)
+    new_browser.cookies.set("__Host-agent_runtime_session", new_session)
+    assert new_browser.get("/agents").status_code == 200
+
+
+def test_authenticated_browser_can_send_human_chat_message_and_ui_uses_csrf(oidc_runtime):
+    client, issuer = oidc_runtime
+    params = start_login(client)
+    assert finish_login(client, issuer, params).status_code == 303
+    csrf = client.get("/auth/session").json()["csrf_token"]
+    headers = {"Origin": "https://testserver", "X-CSRF-Token": csrf}
+    agent = client.post("/agents", headers=headers, json={
+        "name": "Chat", "instructions": "Answer briefly", "model_provider": "openai", "model_name": "fake",
+    })
+    assert agent.status_code == 201, agent.text
+    conversation = client.post("/chat/conversations", headers=headers, json={"agent_id": agent.json()["id"]})
+    assert conversation.status_code == 201, conversation.text
+    message = client.post(f"/chat/conversations/{conversation.json()['id']}/messages", headers=headers, json={"content": "Hello"})
+    assert message.status_code == 201, message.text
+    assert message.json()["status"] == "completed"
+    assert message.json()["messages"][-1]["content"] == "Authenticated response"
+    page = client.get("/").text
+    assert "initializeAuth" in page and "X-CSRF-Token" in page and "/auth/login" in page

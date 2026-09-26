@@ -35,6 +35,14 @@ def _hash(value: str) -> str:
 
 
 @dataclass(frozen=True)
+class LoginFlow:
+    nonce: str
+    verifier: str
+    browser_binding_hash: str
+    expires_at: float
+
+
+@dataclass(frozen=True)
 class Principal:
     kind: str
     issuer: str
@@ -121,11 +129,10 @@ def _origin(url: str) -> str:
     parsed = urlsplit(url)
     port = parsed.port
     default_port = (parsed.scheme == "https" and port in (None, 443)) or (parsed.scheme == "http" and port in (None, 80))
-    authority = parsed.hostname or ""
+    hostname = parsed.hostname or ""
+    authority = f"[{hostname}]" if ":" in hostname else hostname
     if not default_port and port is not None:
         authority += f":{port}"
-    if ":" in authority and not authority.startswith("["):
-        authority = f"[{authority}]"
     return f"{parsed.scheme}://{authority}"
 
 
@@ -133,7 +140,7 @@ class OIDCAuth:
     def __init__(self, config: OIDCConfig, database: Database) -> None:
         self.config = config
         self.database = database
-        self._flows: dict[str, tuple[str, str, str, float]] = {}
+        self._flows: dict[str, LoginFlow] = {}
         self._flow_lock = threading.Lock()
         self._metadata: dict[str, Any] | None = None
 
@@ -147,6 +154,10 @@ class OIDCAuth:
             metadata = response.json()
         if metadata.get("issuer") != self.config.issuer:
             raise ValueError("OIDC discovery issuer did not match configured issuer.")
+        # This implementation is a public client: it authenticates the code exchange with PKCE, not a client secret.
+        supported_auth = metadata.get("token_endpoint_auth_methods_supported", ["client_secret_basic"])
+        if not isinstance(supported_auth, list) or "none" not in supported_auth:
+            raise ValueError("OIDC provider does not advertise public-client token exchange.")
         for key in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
             endpoint = metadata.get(key)
             if not isinstance(endpoint, str) or _origin(endpoint) != _origin(self.config.issuer):
@@ -155,19 +166,19 @@ class OIDCAuth:
         self._metadata = metadata
         return metadata
 
-    def begin_login(self) -> tuple[str, str]:
+    def begin_login(self, existing_browser_binding: str | None = None) -> tuple[str, str]:
         metadata = self._discovery()
         state = secrets.token_urlsafe(32)
         nonce = secrets.token_urlsafe(32)
         verifier = secrets.token_urlsafe(64)
-        browser_binding = secrets.token_urlsafe(32)
+        browser_binding = existing_browser_binding if existing_browser_binding and len(existing_browser_binding) >= 43 else secrets.token_urlsafe(32)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
         with self._flow_lock:
             now = time.time()
-            self._flows = {key: flow for key, flow in self._flows.items() if flow[2] > now}
+            self._flows = {key: flow for key, flow in self._flows.items() if flow.expires_at > now}
             if len(self._flows) >= 1024:
                 raise RuntimeError("OIDC login flow capacity reached.")
-            self._flows[_hash(state)] = (nonce, verifier, _hash(browser_binding), now + FLOW_TTL_SECONDS)
+            self._flows[_hash(state)] = LoginFlow(nonce, verifier, _hash(browser_binding), now + FLOW_TTL_SECONDS)
         authorization_url = metadata["authorization_endpoint"] + "?" + urlencode({
             "response_type": "code", "client_id": self.config.client_id,
             "redirect_uri": self.config.redirect_uri, "scope": "openid profile",
@@ -180,12 +191,12 @@ class OIDCAuth:
         key = _hash(state)
         with self._flow_lock:
             flow = self._flows.get(key)
-            if flow is None or flow[3] <= time.time() or not browser_binding or not hmac.compare_digest(flow[2], _hash(browser_binding)):
+            if flow is None or flow.expires_at <= time.time() or not browser_binding or not hmac.compare_digest(flow.browser_binding_hash, _hash(browser_binding)):
                 raise ValueError("Invalid, expired, or browser-unbound OIDC state.")
             del self._flows[key]
-        return flow[0], flow[1]
+        return flow.nonce, flow.verifier
 
-    def complete_login(self, code: str, state: str, browser_binding: str | None) -> str:
+    def complete_login(self, code: str, state: str, browser_binding: str | None, prior_session_id: str | None = None) -> str:
         nonce, verifier = self.consume_state(state, browser_binding)
         metadata = self._discovery()
         with httpx.Client(timeout=8, follow_redirects=False) as client:
@@ -217,8 +228,11 @@ class OIDCAuth:
         audience = claims.get("aud", [])
         if isinstance(audience, str):
             audience = [audience]
-        if len(audience) > 1 and claims.get("azp") != self.config.client_id:
+        authorized_party = claims.get("azp")
+        if authorized_party is not None and authorized_party != self.config.client_id:
             raise ValueError("OIDC authorized party mismatch.")
+        if len(audience) > 1 and authorized_party != self.config.client_id:
+            raise ValueError("OIDC authorized party is required for a multi-audience token.")
         if claims.get("nonce") != nonce:
             raise ValueError("OIDC nonce mismatch.")
         subject = claims.get("sub")
@@ -233,6 +247,10 @@ class OIDCAuth:
         )
         with self.database.session() as db:
             db.execute(delete(AuthSession).where(or_(AuthSession.expires_at <= now, AuthSession.revoked_at.is_not(None))))
+            if prior_session_id:
+                previous = db.get(AuthSession, _hash(prior_session_id))
+                if previous is not None and previous.revoked_at is None:
+                    previous.revoked_at = now
             db.add(row)
             db.commit()
         return session_id
@@ -245,7 +263,10 @@ class OIDCAuth:
         with self.database.session() as db:
             row = db.scalar(select(AuthSession).where(AuthSession.session_hash == digest))
             expires_at = row.expires_at.replace(tzinfo=timezone.utc) if row and row.expires_at.tzinfo is None else (row.expires_at if row else now)
-            if row is None or row.revoked_at is not None or expires_at <= now:
+            if (row is None or row.revoked_at is not None or expires_at <= now
+                    or row.issuer != self.config.issuer
+                    or row.subject != self.config.legacy_subject
+                    or row.tenant_id != self.config.tenant_id):
                 return None
             return Principal("human", row.issuer, row.subject, row.tenant_id, tuple(row.scopes), digest)
 
@@ -319,11 +340,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 def install_auth_routes(app: FastAPI, auth: OIDCAuth | None) -> None:
     @app.get("/auth/login", include_in_schema=False)
-    def login(response: Response):
+    def login(request: Request):
         if auth is None:
             raise HTTPException(status_code=404, detail="Not found")
         try:
-            url, flow_cookie = auth.begin_login()
+            url, flow_cookie = auth.begin_login(request.cookies.get(FLOW_COOKIE_NAME))
         except Exception as exc:
             raise HTTPException(status_code=503, detail="OIDC provider is unavailable.") from exc
         response = RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
@@ -343,14 +364,13 @@ def install_auth_routes(app: FastAPI, auth: OIDCAuth | None) -> None:
         if error or not code or not state:
             raise HTTPException(status_code=400, detail="OIDC authorization failed.")
         try:
-            session_id = auth.complete_login(code, state, request.cookies.get(FLOW_COOKIE_NAME))
+            session_id = auth.complete_login(code, state, request.cookies.get(FLOW_COOKIE_NAME), request.cookies.get(COOKIE_NAME))
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail="This identity is not allowed.") from exc
         except Exception as exc:
             raise HTTPException(status_code=400, detail="OIDC callback validation failed.") from exc
         response = RedirectResponse("/", status_code=303, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
         response.set_cookie(COOKIE_NAME, session_id, max_age=auth.config.session_ttl_seconds, secure=True, httponly=True, samesite="lax", path="/")
-        response.delete_cookie(FLOW_COOKIE_NAME, path="/", secure=True, httponly=True, samesite="lax")
         return response
 
     @app.get("/auth/session", include_in_schema=False)

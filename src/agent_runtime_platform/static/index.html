@@ -275,11 +275,13 @@
       let agents = [];
       let codexModels = [];
       let csrfToken = "";
+      let authEnabled = false;
 
       async function initializeAuth() {
         const response = await fetch("/auth/session", { credentials: "same-origin" });
         const session = await response.json().catch(() => ({}));
-        if (!session.auth_enabled) return true;
+        authEnabled = Boolean(session.auth_enabled);
+        if (!authEnabled) return true;
         if (!session.authenticated) {
           document.querySelector("main.layout").hidden = true;
           document.getElementById("login-required").hidden = false;
@@ -302,6 +304,7 @@
           headers: { "Content-Type": "application/json", ...((options.method && !["GET", "HEAD", "OPTIONS"].includes(options.method.toUpperCase()) && csrfToken) ? { "X-CSRF-Token": csrfToken } : {}), ...(options.headers || {}) },
         });
         const payload = await response.json().catch(() => ({}));
+        if (response.status === 401 && authEnabled) window.location.assign("/");
         if (!response.ok) {
           const detail = payload.detail;
           const message = typeof detail === "string" ? detail : detail?.error || `İstek başarısız (${response.status})`;
