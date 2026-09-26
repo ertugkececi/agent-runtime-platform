@@ -76,7 +76,7 @@ Bu JSON hedeflenen ajan sözleşmesini gösterir. API'deki tool_ids, /mcp/tools 
 
 MCP katalog yapılandırma örneği:
 
-    {"docs":{"command":"uvx","args":["example-readonly-mcp"],"env_vars":["DOCS_TOKEN"],"read_only_tools":["search","fetch"]}
+    {"docs":{"command":"uvx","args":["example-readonly-mcp"],"env_vars":["DOCS_TOKEN"],"read_only_tools":["search","fetch"]}}
 
 Bu JSON'u AGENT_RUNTIME_MCP_SERVERS ortam değişkenine koy. Token değerleri ayrı süreç ortam değişkenlerinde tutulur ve API yanıtlarına ya da çalıştırma izlerine eklenmez. read_only_tools güven kararıdır: MCP readOnlyHint açıklama niteliğindedir ve tek başına yetki vermez. İlk sürüm Codex'e yalnızca ajanın açık izin listesindeki araçları verir; shell, birleşik çalıştırma, web araması ve diğer MCP sunucuları kapalı kalır. İzin kaldırma, kuyruğa alınmış iş Codex'i başlatmadan önce güncel ajan kaydıyla tekrar denetlenir. Araç çağrısı izi yalnızca sunucu, araç, durum ve aşama alanlarını tutar. Araç argümanları, sonuç içeriği ve gizli değerler kaydedilmez. Codex oturumu, kullanıcı genelindeki ~/.codex/config.toml dosyasını devralmaz: kimlik doğrulama dosyası yalnızca uygulamanın ~/.agent-runtime-platform/codex-home dizinine kopyalanır (dizin 0700, dosya 0600); uygulama tarafından yenilenen belirteçler bu kopyada kalır.
 

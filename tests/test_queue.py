@@ -350,7 +350,7 @@ def test_graph_retry_resumes_persisted_child_when_parent_model_returns_plain_tex
     app.state.database.dispose()
 
 
-def test_queued_run_rechecks_tool_grants_before_codex_invocation(tmp_path, monkeypatch):
+def test_queued_run_does_not_use_mcp_grants_after_agent_is_disabled(tmp_path, monkeypatch):
     import json
     import sys
 
@@ -391,8 +391,9 @@ def test_queued_run_rechecks_tool_grants_before_codex_invocation(tmp_path, monke
     ).json()
 
     assert claim_one(app.state.runtime) == queued["id"]
-    revoked = client.patch(f"/agents/{agent['id']}", json={"tool_ids": []})
+    revoked = client.patch(f"/agents/{agent['id']}", json={"enabled": False})
     assert revoked.status_code == 200
+    assert revoked.json()["tool_ids"] == ["fixture/lookup"]
     app.state.runtime.execute_queued_run(queued["id"])
 
     result = app.state.runtime.get_run(queued["id"])
@@ -402,5 +403,63 @@ def test_queued_run_rechecks_tool_grants_before_codex_invocation(tmp_path, monke
     assert checked["payload"]["snapshot_tool_ids"] == ["fixture/lookup"]
     assert checked["payload"]["effective_tool_ids"] == []
     assert provider.tool_ids_at_call == []
+    client.close()
+    app.state.database.dispose()
+
+
+def test_failed_child_retry_rechecks_revoked_codex_grant(tmp_path, monkeypatch):
+    import json
+    import sys
+
+    fixture = Path(__file__).parent / "fixtures" / "readonly_mcp_server.py"
+    monkeypatch.setenv("AGENT_RUNTIME_MCP_SERVERS", json.dumps({
+        "fixture": {"command": sys.executable, "args": [str(fixture)], "read_only_tools": ["lookup"]}
+    }))
+
+    class ToolAware:
+        def __init__(self):
+            self.grants = []
+        def generate(self, agent, history, **kwargs):
+            self.grants.append(list(agent.get("tool_ids", [])))
+            return "delegated response"
+
+    parent_provider = QueueProvider()
+    tool_provider = ToolAware()
+    app = create_app(
+        f"sqlite:///{tmp_path / 'child-revoke.db'}",
+        ProviderRegistry({"openai": parent_provider, "codex": tool_provider}),
+    )
+    client = TestClient(app)
+    parent = client.post("/agents", json={
+        "name": "Parent", "instructions": "Delegate", "model_provider": "openai", "model_name": "test"
+    }).json()
+    conversation = client.post("/chat/conversations", json={"agent_id": parent["id"]}).json()
+    run_id = client.post(
+        f"/chat/conversations/{conversation['id']}/messages/async", json={"content": "Resume child"}
+    ).json()["id"]
+    child = client.post("/agents", json={
+        "name": "Codex child", "instructions": "Read only", "model_provider": "codex",
+        "model_name": "test", "capabilities": ["backend"], "tool_ids": ["fixture/lookup"],
+    }).json()
+    assert claim_one(app.state.runtime) == run_id
+    with app.state.database.session() as session:
+        root = session.scalar(select(Task).where(Task.root_run_id == run_id, Task.parent_task_id.is_(None)))
+        child_row = session.get(Agent, child["id"])
+        session.add(Task(
+            root_run_id=run_id, parent_task_id=root.id, conversation_id=conversation["id"],
+            agent_id=child_row.id, capability="backend", objective="Original child task",
+            config_snapshot=_agent_snapshot(child_row), status="failed", error_code="provider_error",
+            completed_at=datetime.now(timezone.utc), result="stale",
+        ))
+        session.commit()
+    assert client.patch(f"/agents/{child['id']}", json={"tool_ids": []}).status_code == 200
+
+    app.state.runtime.execute_queued_run(run_id)
+    result = app.state.runtime.get_run(run_id)
+    assert result["status"] == "completed"
+    assert tool_provider.grants == [[]]
+    checked = [event["payload"] for event in result["events"] if event["type"] == "mcp_tool_permissions_checked" and event["payload"].get("phase") == "delegated_task"]
+    assert checked and checked[-1]["effective_tool_ids"] == []
+    assert not [event for event in result["events"] if event["type"] == "mcp_tool_call"]
     client.close()
     app.state.database.dispose()

@@ -93,6 +93,20 @@ def test_default_agent_has_no_tools_and_updates_revoke_grants(mcp_client):
     assert revoked.json()["tool_ids"] == []
 
 
+def test_disable_and_noop_patch_work_when_mcp_catalog_is_unavailable(mcp_client, monkeypatch):
+    agent = mcp_client.post(
+        "/agents", json={"name": "Disable me", "instructions": "Read.", "model_name": "test", "tool_ids": ["fixture/lookup"]}
+    ).json()
+    monkeypatch.setenv("AGENT_RUNTIME_MCP_SERVERS", "{}")
+    disabled = mcp_client.patch(f"/agents/{agent['id']}", json={"enabled": False})
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["enabled"] is False
+    version = disabled.json()["version"]
+    noop = mcp_client.patch(f"/agents/{agent['id']}", json={})
+    assert noop.status_code == 200
+    assert noop.json()["version"] == version
+
+
 def test_codex_home_is_persistent_private_and_does_not_inherit_global_config(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
@@ -209,3 +223,17 @@ def test_codex_mcp_items_emit_metadata_only_tool_events(monkeypatch, tmp_path):
     assert "private" not in json.dumps(callbacks)
     assert "mcp_servers.fixture.enabled_tools=[\"lookup\"]" in setup["config"].config_overrides
     assert "mcp_servers" not in setup["thread"]["config"]
+
+
+def test_codex_home_concurrent_initialization_uses_distinct_atomic_temps(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    source = tmp_path / "source-concurrent"
+    source.mkdir()
+    (source / "auth.json").write_text('{"access_token":"safe"}')
+    home = tmp_path / "persistent-home"
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _index: prepare_codex_home(app_home=home, source_home=source), range(16)))
+    assert all(result == home for result in results)
+    assert (home / "auth.json").read_text() == '{"access_token":"safe"}'
+    assert not list(home.glob(".auth-*.tmp"))

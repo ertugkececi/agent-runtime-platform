@@ -263,12 +263,13 @@ class AgentRuntimeService:
             if "model_provider" in changes and not self.providers.supports(changes["model_provider"]):
                 raise InvalidMessageError("The requested model provider is not configured.")
             updated_values = dict(changes)
-            try:
-                proposed_provider = updated_values.get("model_provider", agent.model_provider)
-                proposed_tools = updated_values.get("tool_ids", agent.tool_ids or [])
-                updated_values["tool_ids"] = validate_tool_ids(proposed_tools, proposed_provider)
-            except ValueError as exc:
-                raise InvalidMessageError(str(exc)) from exc
+            if "tool_ids" in updated_values or "model_provider" in updated_values:
+                try:
+                    proposed_provider = updated_values.get("model_provider", agent.model_provider)
+                    proposed_tools = updated_values.get("tool_ids", agent.tool_ids or [])
+                    updated_values["tool_ids"] = validate_tool_ids(proposed_tools, proposed_provider)
+                except ValueError as exc:
+                    raise InvalidMessageError(str(exc)) from exc
             capabilities = updated_values.pop("capabilities", None)
             if updated_values or capabilities is not None:
                 for key, value in updated_values.items():
@@ -597,27 +598,7 @@ class AgentRuntimeService:
                         history.append({"role": "assistant", "content": message.content})
                     elif message.recipient_agent_id == target_id:
                         history.append({"role": "user", "content": message.content})
-                target_config = dict(run.target_config_snapshot)
-                current_agent = session.get(Agent, target_id)
-                current_grants = set(current_agent.tool_ids or []) if current_agent is not None else set()
-                originally_granted = set(target_config.get("tool_ids", []))
-                effective_grants = sorted(originally_granted & current_grants)
-                if effective_grants:
-                    try:
-                        effective_grants = validate_tool_ids(effective_grants, target_config["model_provider"])
-                    except ValueError:
-                        effective_grants = []
-                target_config["tool_ids"] = effective_grants
-                _append_event(
-                    session,
-                    run,
-                    "mcp_tool_permissions_checked",
-                    {
-                        "snapshot_tool_ids": sorted(originally_granted),
-                        "effective_tool_ids": effective_grants,
-                        "active_agent_version": current_agent.version if current_agent is not None else None,
-                    },
-                )
+                target_config = run.target_config_snapshot
                 _append_event(
                     session,
                     run,
@@ -650,27 +631,7 @@ class AgentRuntimeService:
                     }
                     for message in messages
                 ]
-                target_config = dict(chat_run.target_config_snapshot)
-                current_agent = session.get(Agent, target_id)
-                current_grants = set(current_agent.tool_ids or []) if current_agent is not None else set()
-                originally_granted = set(target_config.get("tool_ids", []))
-                effective_grants = sorted(originally_granted & current_grants)
-                if effective_grants:
-                    try:
-                        effective_grants = validate_tool_ids(effective_grants, target_config["model_provider"])
-                    except ValueError:
-                        effective_grants = []
-                target_config["tool_ids"] = effective_grants
-                _append_human_chat_event(
-                    session,
-                    chat_run,
-                    "mcp_tool_permissions_checked",
-                    {
-                        "snapshot_tool_ids": sorted(originally_granted),
-                        "effective_tool_ids": effective_grants,
-                        "active_agent_version": current_agent.version if current_agent is not None else None,
-                    },
-                )
+                target_config = chat_run.target_config_snapshot
                 _append_human_chat_event(
                     session,
                     chat_run,
@@ -743,12 +704,46 @@ class AgentRuntimeService:
         allow_handoff: bool,
         task_id: str | None = None,
     ) -> str | HandoffRequest:
+        snapshot_tool_ids = sorted(set(agent.get("tool_ids") or []))
+        effective_tool_ids: list[str] = []
+        active_agent_version = None
+        with self.database.session() as session:
+            current_agent = session.get(Agent, agent["id"])
+            if current_agent is not None:
+                active_agent_version = current_agent.version
+                current_grants = set(current_agent.tool_ids or []) if current_agent.enabled else set()
+                effective_tool_ids = sorted(set(snapshot_tool_ids) & current_grants)
+                if effective_tool_ids:
+                    try:
+                        effective_tool_ids = validate_tool_ids(
+                            effective_tool_ids, agent["model_provider"]
+                        )
+                    except ValueError:
+                        effective_tool_ids = []
+            permission_payload = {
+                "agent_id": agent["id"],
+                "phase": phase,
+                "snapshot_tool_ids": snapshot_tool_ids,
+                "effective_tool_ids": effective_tool_ids,
+                "active_agent_version": active_agent_version,
+            }
+            run = session.get(Run, run_id)
+            if run is not None:
+                _append_event(session, run, "mcp_tool_permissions_checked", permission_payload)
+            else:
+                chat_run = session.get(HumanChatRun, run_id)
+                if chat_run is not None:
+                    _append_human_chat_event(
+                        session, chat_run, "mcp_tool_permissions_checked", permission_payload
+                    )
+            session.commit()
+
         payload = {
             "agent_id": agent["id"],
             "provider": agent["model_provider"],
             "model": agent["model_name"],
             "phase": phase,
-            "tool_ids": list(agent.get("tool_ids", [])),
+            "tool_ids": effective_tool_ids,
         }
         if task_id is not None:
             payload["task_id"] = task_id
@@ -764,6 +759,7 @@ class AgentRuntimeService:
             session.commit()
 
         provider_agent = dict(agent)
+        provider_agent["tool_ids"] = effective_tool_ids
         provider_agent["tool_event_callback"] = lambda tool_event: self._record_mcp_tool_event(run_id, phase, tool_event)
         output = self.providers.generate(provider_agent, history, allow_handoff=allow_handoff)
         if isinstance(output, str) and not output.strip():

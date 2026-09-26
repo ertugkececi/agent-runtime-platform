@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 
@@ -26,10 +27,18 @@ def prepare_codex_home(
         not target_auth.exists()
         or source_auth.stat().st_mtime_ns > target_auth.stat().st_mtime_ns
     ):
-        temporary = destination / ".auth.json.tmp"
-        shutil.copyfile(source_auth, temporary)
-        temporary.chmod(0o600)
-        os.replace(temporary, target_auth)
+        fd, temporary_name = tempfile.mkstemp(prefix=".auth-", suffix=".tmp", dir=destination)
+        temporary = Path(temporary_name)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as target:
+                with source_auth.open("rb") as source_file:
+                    shutil.copyfileobj(source_file, target)
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temporary, target_auth)
+        finally:
+            temporary.unlink(missing_ok=True)
     if target_auth.exists():
         target_auth.chmod(0o600)
     return destination

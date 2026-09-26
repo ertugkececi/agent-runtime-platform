@@ -122,8 +122,8 @@ def test_two_registered_agents_exchange_a_persisted_message_and_trace(client_and
     assert [event["type"] for event in run["events"]] == [
         "run_started",
         "message_sent",
-        "mcp_tool_permissions_checked",
         "agent_invocation_started",
+        "mcp_tool_permissions_checked",
         "model_call_started",
         "model_call_completed",
         "agent_response_saved",
@@ -325,8 +325,8 @@ def test_human_can_chat_with_an_agent_and_reload_the_persisted_trace(client_and_
     assert [event["type"] for event in run["events"]] == [
         "run_started",
         "user_message_received",
-        "mcp_tool_permissions_checked",
         "agent_invocation_started",
+        "mcp_tool_permissions_checked",
         "model_call_started",
         "model_call_completed",
         "agent_response_saved",
