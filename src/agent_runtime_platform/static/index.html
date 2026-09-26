@@ -123,6 +123,21 @@
         <select id="agent-select" aria-label="Sohbet edilecek ajan"></select>
         <button class="button secondary full" id="new-chat" type="button">Yeni sohbet</button>
 
+        <details id="edit-agent-details" hidden>
+          <summary>Seçili ajanı düzenle</summary>
+          <form id="edit-agent-form">
+            <label for="edit-model-name">Codex modeli</label>
+            <select id="edit-model-name" required></select>
+            <label for="edit-model-effort">Düşünme eforu</label>
+            <select id="edit-model-effort"></select>
+            <label for="edit-agent-instructions">Talimatlar</label>
+            <textarea id="edit-agent-instructions" maxlength="20000" required></textarea>
+            <p class="muted" id="edit-agent-hint">Değişiklikler sonraki yanıtta geçerli olur.</p>
+            <button class="button full" id="edit-agent-button" type="submit">Değişiklikleri kaydet</button>
+            <button class="button secondary full" id="reset-agent-button" type="button">Değişiklikleri geri al</button>
+          </form>
+        </details>
+
         <details id="create-agent-details">
           <summary>Yeni ajan oluştur</summary>
           <form id="create-agent-form">
@@ -165,6 +180,11 @@
       const modelSelect = document.getElementById("model-name");
       const effortSelect = document.getElementById("model-effort");
       const createAgentButton = document.getElementById("create-agent-button");
+      const editAgentDetails = document.getElementById("edit-agent-details");
+      const editModelSelect = document.getElementById("edit-model-name");
+      const editEffortSelect = document.getElementById("edit-model-effort");
+      const editInstructions = document.getElementById("edit-agent-instructions");
+      const editAgentButton = document.getElementById("edit-agent-button");
       const themeToggle = document.getElementById("theme-toggle");
       function applyTheme(theme) {
         const isDark = theme === "dark";
@@ -224,6 +244,66 @@
       }
       modelSelect.addEventListener("change", updateEffortOptions);
 
+      function addSelectOption(select, value, label) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        select.append(option);
+      }
+
+      function updateEditEffortOptions(agent, selectedEffort) {
+        const model = codexModels.find((item) => item.id === editModelSelect.value);
+        editEffortSelect.replaceChildren();
+        if (selectedEffort === null) addSelectOption(editEffortSelect, "", "Model varsayılanı (kayıtlı ayar)");
+        if (selectedEffort && !model?.efforts.includes(selectedEffort)) {
+          addSelectOption(editEffortSelect, selectedEffort, `Kayıtlı efor: ${effortLabels[selectedEffort] || selectedEffort}`);
+        }
+        for (const effort of model?.efforts || []) {
+          addSelectOption(editEffortSelect, effort, effortLabels[effort] || effort);
+        }
+        if (!editEffortSelect.options.length) addSelectOption(editEffortSelect, "", "Model varsayılanı (kayıtlı ayar)");
+        editEffortSelect.value = selectedEffort || "";
+        editEffortSelect.disabled = agent.model_provider !== "codex" || !model;
+      }
+
+      function renderEditModelOptions(agent, selectedModel = agent.model_name, selectedEffort = agent.model_reasoning_effort) {
+        editModelSelect.replaceChildren();
+        if (!codexModels.some((item) => item.id === selectedModel)) {
+          addSelectOption(editModelSelect, selectedModel, `${selectedModel} (kayıtlı model)`);
+        }
+        for (const model of codexModels) {
+          addSelectOption(editModelSelect, model.id, `${model.label} (${model.id})`);
+        }
+        editModelSelect.value = selectedModel;
+        editModelSelect.disabled = agent.model_provider !== "codex" || !codexModels.length;
+        updateEditEffortOptions(agent, selectedEffort);
+        document.getElementById("edit-agent-hint").textContent = agent.model_provider !== "codex"
+          ? "Bu ajanda yalnızca talimatlar düzenlenebilir."
+          : "Değişiklikler sonraki yanıtta geçerli olur.";
+      }
+
+      function renderEditAgent() {
+        const agent = agents.find((item) => item.id === agentSelect.value);
+        editAgentDetails.hidden = !agent;
+        if (!agent) {
+          editAgentDetails.open = false;
+          return;
+        }
+        editInstructions.value = agent.instructions;
+        renderEditModelOptions(agent);
+      }
+
+      editModelSelect.addEventListener("change", () => {
+        const agent = agents.find((item) => item.id === agentSelect.value);
+        const model = codexModels.find((item) => item.id === editModelSelect.value);
+        if (agent && model) {
+          const effort = model.id === agent.model_name
+            ? agent.model_reasoning_effort : model.default_effort || model.efforts[0] || null;
+          updateEditEffortOptions(agent, effort);
+        }
+      });
+      document.getElementById("reset-agent-button").addEventListener("click", renderEditAgent);
+
       async function loadCodexModels() {
         const models = await request("/codex/models");
         if (!Array.isArray(models) || !models.length) throw new Error("Seçilebilir Codex modeli bulunamadı.");
@@ -240,6 +320,10 @@
         modelSelect.disabled = false;
         updateEffortOptions();
         createAgentButton.disabled = effortSelect.disabled;
+        const editingAgent = agents.find((item) => item.id === agentSelect.value);
+        if (editingAgent) {
+          renderEditModelOptions(editingAgent, editModelSelect.value, editEffortSelect.value || editingAgent.model_reasoning_effort);
+        }
       }
 
       function renderMessages(items) {
@@ -294,6 +378,7 @@
         }
         if (!agents.length) {
           agentSelect.disabled = true;
+          renderEditAgent();
           createAgentDetails.open = true;
           setStatus("Sohbete başlamak için önce bir ajan oluştur.");
           return;
@@ -304,6 +389,7 @@
         else agentSelect.selectedIndex = 0;
         localStorage.setItem("agentRuntimeAgentId", agentSelect.value);
         createAgentDetails.open = false;
+        renderEditAgent();
         await loadConversation();
       }
 
@@ -320,8 +406,49 @@
         conversationId = "";
         localStorage.removeItem("agentRuntimeConversationId");
         localStorage.setItem("agentRuntimeAgentId", agentSelect.value);
+        renderEditAgent();
         setStatus("Ajan değişti. Yeni sohbet başlatabilirsin.");
         renderMessages([]);
+      });
+
+      document.getElementById("edit-agent-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const agent = agents.find((item) => item.id === agentSelect.value);
+        if (!agent) return;
+        const changes = {};
+        const instructions = editInstructions.value.trim();
+        if (instructions !== agent.instructions) changes.instructions = instructions;
+        if (agent.model_provider === "codex") {
+          const modelName = editModelSelect.value;
+          const effort = editEffortSelect.value;
+          if (modelName !== agent.model_name && !effort) {
+            setStatus("Yeni model için düşünme eforu seç.", true);
+            return;
+          }
+          if (modelName !== agent.model_name) changes.model_name = modelName;
+          if (effort && effort !== agent.model_reasoning_effort) changes.model_reasoning_effort = effort;
+        }
+        if (!Object.keys(changes).length) {
+          setStatus("Değişiklik yapılmadı.");
+          return;
+        }
+        editAgentButton.disabled = true;
+        agentSelect.disabled = true;
+        setStatus("Ajan ayarları kaydediliyor…");
+        try {
+          const updated = await request(`/agents/${encodeURIComponent(agent.id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(changes),
+          });
+          agents = agents.map((item) => item.id === updated.id ? updated : item);
+          renderEditAgent();
+          setStatus("Ajan ayarları kaydedildi. Sonraki yanıt yeni ayarları kullanacak.");
+        } catch (error) {
+          setStatus(error.message, true);
+        } finally {
+          editAgentButton.disabled = false;
+          agentSelect.disabled = false;
+        }
       });
 
       document.getElementById("create-agent-form").addEventListener("submit", async (event) => {
