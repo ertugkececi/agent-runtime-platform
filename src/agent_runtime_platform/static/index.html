@@ -199,6 +199,9 @@
       themeToggle.addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
       applyTheme(document.documentElement.dataset.theme);
       let conversationId = localStorage.getItem("agentRuntimeConversationId") || "";
+      let viewGeneration = 0;
+      let activeRunId = "";
+      let conversationRetryTimer = 0;
       let agents = [];
       let codexModels = [];
 
@@ -348,21 +351,92 @@
         messagesElement.scrollTop = messagesElement.scrollHeight;
       }
 
-      async function loadConversation() {
-        if (!conversationId) {
+      function runStatusMessage(status) {
+        return ({
+          queued: "Yanıt sırada bekliyor…",
+          running: "Ajan yanıtlıyor…",
+          completed: "Yanıt hazır.",
+          failed: "Ajan yanıtı oluşturamadı.",
+        })[status] || "Görev durumu alınıyor…";
+      }
+
+      function showRunState(status, detail = "", isError = false) {
+        setStatus(detail ? `${runStatusMessage(status)} ${detail}` : runStatusMessage(status), isError);
+        sendButton.disabled = status === "queued" || status === "running";
+      }
+
+      function newestRunMessage(items) {
+        return [...items].reverse().find((item) => item.sender_type === "user" && item.run_id);
+      }
+
+      async function loadConversation({ resume = true } = {}) {
+        const requestedId = conversationId;
+        const generation = viewGeneration;
+        if (!requestedId) {
+          activeRunId = "";
           document.getElementById("chat-title").textContent = "Yeni sohbet";
           renderMessages([]);
-          return;
+          return null;
         }
         try {
-          const conversation = await request(`/conversations/${encodeURIComponent(conversationId)}`);
+          const conversation = await request(`/conversations/${encodeURIComponent(requestedId)}`);
+          if (requestedId !== conversationId || generation !== viewGeneration) return null;
+          clearTimeout(conversationRetryTimer);
+          conversationRetryTimer = 0;
           document.getElementById("chat-title").textContent = "Sohbet geçmişi";
-          renderMessages(conversation.messages || []);
+          const items = conversation.messages || [];
+          renderMessages(items);
+          if (resume) {
+            const pending = newestRunMessage(items);
+            if (pending && pending.run_id !== activeRunId) {
+              void monitorRun(pending.run_id, requestedId, generation);
+            }
+          }
+          return conversation;
         } catch (error) {
-          conversationId = "";
-          localStorage.removeItem("agentRuntimeConversationId");
-          renderMessages([]);
-          setStatus("Önceki sohbet yüklenemedi. Yeni bir sohbet başlatabilirsin.", true);
+          if (requestedId === conversationId && generation === viewGeneration) {
+            setStatus("Sohbet yüklenemedi. Bağlantı kurulunca yeniden denenecek.", true);
+            clearTimeout(conversationRetryTimer);
+            conversationRetryTimer = setTimeout(() => {
+              if (requestedId === conversationId && generation === viewGeneration) void loadConversation();
+            }, 3000);
+          }
+          return null;
+        }
+      }
+
+      async function monitorRun(runId, requestedConversationId, generation) {
+        activeRunId = runId;
+        let delay = 1200;
+        while (runId === activeRunId && requestedConversationId === conversationId && generation === viewGeneration) {
+          try {
+            const run = await request(`/runs/${encodeURIComponent(runId)}`);
+            if (runId !== activeRunId || requestedConversationId !== conversationId || generation !== viewGeneration) return;
+            const status = run.status;
+            if (status === "completed") {
+              await loadConversation({ resume: false });
+              if (runId === activeRunId && generation === viewGeneration) {
+                showRunState("completed", `· Çalıştırma ${runId}`);
+                sendButton.disabled = false;
+              }
+              activeRunId = "";
+              return;
+            }
+            if (status === "failed") {
+              await loadConversation({ resume: false });
+              const detail = run.error_code ? `(${run.error_code})` : "";
+              showRunState("failed", detail, true);
+              activeRunId = "";
+              return;
+            }
+            showRunState(status === "running" ? "running" : "queued");
+            delay = 1200;
+          } catch (_) {
+            if (runId !== activeRunId || requestedConversationId !== conversationId || generation !== viewGeneration) return;
+            setStatus("Bağlantı kesildi. Görev durumu yeniden denenecek…", true);
+            delay = Math.min(delay * 1.7, 10000);
+          }
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
 
@@ -394,6 +468,11 @@
       }
 
       document.getElementById("new-chat").addEventListener("click", () => {
+        viewGeneration += 1;
+        activeRunId = "";
+        clearTimeout(conversationRetryTimer);
+        sendButton.disabled = false;
+        messageInput.disabled = false;
         conversationId = "";
         localStorage.removeItem("agentRuntimeConversationId");
         localStorage.setItem("agentRuntimeAgentId", agentSelect.value);
@@ -403,6 +482,11 @@
       });
 
       agentSelect.addEventListener("change", () => {
+        viewGeneration += 1;
+        activeRunId = "";
+        clearTimeout(conversationRetryTimer);
+        sendButton.disabled = false;
+        messageInput.disabled = false;
         conversationId = "";
         localStorage.removeItem("agentRuntimeConversationId");
         localStorage.setItem("agentRuntimeAgentId", agentSelect.value);
@@ -487,35 +571,68 @@
         event.preventDefault();
         const content = messageInput.value.trim();
         const agentId = agentSelect.value;
-        if (!content || !agentId) return;
+        if (!content || !agentId || activeRunId) return;
+        const generation = viewGeneration;
         sendButton.disabled = true;
         messageInput.disabled = true;
-        setStatus("Ajan yanıtlıyor…");
+        setStatus("Mesaj kuyruğa gönderiliyor…");
+        let targetConversationId = conversationId;
+        let beforeMessageIds = new Set();
         try {
-          if (!conversationId) {
-            const conversation = await request("/chat/conversations", {
+          if (!targetConversationId) {
+            const created = await request("/chat/conversations", {
               method: "POST",
               body: JSON.stringify({ agent_id: agentId }),
             });
-            conversationId = conversation.id;
+            if (generation !== viewGeneration) return;
+            targetConversationId = created.id;
+            conversationId = targetConversationId;
             localStorage.setItem("agentRuntimeConversationId", conversationId);
             localStorage.setItem("agentRuntimeAgentId", agentId);
+          } else {
+            const before = await request(`/conversations/${encodeURIComponent(targetConversationId)}`);
+            if (generation !== viewGeneration || targetConversationId !== conversationId) return;
+            beforeMessageIds = new Set((before.messages || []).map((item) => item.id));
           }
-          const run = await request(`/chat/conversations/${encodeURIComponent(conversationId)}/messages`, {
+          const accepted = await request(`/chat/conversations/${encodeURIComponent(targetConversationId)}/messages/async`, {
             method: "POST",
             body: JSON.stringify({ content }),
           });
+          if (generation !== viewGeneration || targetConversationId !== conversationId) return;
           messageInput.value = "";
-          await loadConversation();
-          setStatus(`Yanıt hazır · Çalıştırma ${run.id}`);
+          activeRunId = accepted.id;
+          showRunState(accepted.status || "queued", `· Çalıştırma ${accepted.id}`);
+          await loadConversation({ resume: false });
+          void monitorRun(accepted.id, targetConversationId, generation);
         } catch (error) {
-          await loadConversation();
-          const runId = error.payload?.run_id;
-          setStatus(runId ? `${error.message} · Çalıştırma ${runId}` : error.message, true);
+          if (generation !== viewGeneration || targetConversationId !== conversationId) return;
+          // A lost response can happen after the server accepted the message. Look for its
+          // persisted run before allowing a manual retry, so a transient disconnect does
+          // not create duplicate work.
+          let acceptedRun = null;
+          if (targetConversationId) {
+            const recovered = await loadConversation({ resume: false });
+            acceptedRun = (recovered?.messages || []).find((item) =>
+              item.sender_type === "user" && item.content === content &&
+              item.run_id && !beforeMessageIds.has(item.id));
+          }
+          if (acceptedRun) {
+            messageInput.value = "";
+            activeRunId = acceptedRun.run_id;
+            showRunState("queued", `· Çalıştırma ${acceptedRun.run_id}`);
+            void monitorRun(acceptedRun.run_id, targetConversationId, generation);
+          } else {
+            setStatus(`${error.message} Gönderim sonucu doğrulanamadı; yinelenen görev oluşturmamak için sohbeti yenileyip geçmişi denetle.`, true);
+            // If the recovery read itself failed, keep sending locked until a refresh
+            // reloads the durable conversation and its run status.
+            sendButton.disabled = recovered === null;
+          }
         } finally {
-          sendButton.disabled = false;
-          messageInput.disabled = false;
-          messageInput.focus();
+          if (generation === viewGeneration) {
+            messageInput.disabled = false;
+            if (!activeRunId) sendButton.disabled = false;
+            messageInput.focus();
+          }
         }
       });
 
