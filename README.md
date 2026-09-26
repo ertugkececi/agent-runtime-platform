@@ -18,7 +18,7 @@ Bir kullanıcı arayüzünden veya API'den ajan oluştur; modele, talimatlara, y
 - İnsan-ajan sohbetinde bir alt görevi, tam yetenek eşleşmesiyle bulunan tek etkin ajana devretme; bir istekte en fazla bir devir yapılır.
 - Çalıştırma durumlarını, kullanılan ajan yapılandırması anlık görüntülerini ve sıralı olay izlerini API üzerinden görüntüleme.
 
-Sınırlı grup odası API’si kullanılabilir. Salt okunur MCP araçları, yalnızca Codex sağlayıcısında ve sunucu yöneticisinin tanımladığı yerel stdio sunucularından etkinleştirilebilir. MCP sunucularını ve izinli araç adlarını HTTP API’sine göndermek mümkün değildir.
+Sınırlı grup odası API’si kullanılabilir. Salt okunur MCP araçları, yalnızca Codex sağlayıcısında ve sunucu yöneticisinin tanımladığı yerel stdio sunucularından etkinleştirilebilir. Sunucu yöneticisi ayrıca belirli yetenekleri uzak A2A 1.0 HTTP+JSON ajanlarına eşleyebilir; yalnızca mevcut tek alt görev devri bu güvenilir katalog üzerinden uzak hedefe gider. MCP sunucularını ve izinli araç adlarını HTTP API’sine göndermek mümkün değildir.
 
 ## Kavramsal mimari
 
@@ -257,13 +257,19 @@ Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama 
 | Çalıştırma izi | Durum, ajan yapılandırması anlık görüntüsü, MCP izin kontrolü ve sırayla eklenen araç çağrısı olayları API'den okunabilir. |
 | Kalıcı arka plan kuyruğu | Yeni async API uçları ve ayrı tek sunucu işçisi kullanılabilir; sınırlı yeniden deneme ve başlangıç toparlaması uygulanır. |
 | Grup odası | 2–5 kayıtlı ajan açık sırayla bir tur katkı verir; seçilen moderatör katkılardan tek bir son yanıt üretir. Kuyruk ve çalışma izi kalıcıdır. |
-| Görev devri | İnsan-ajan sohbetinde en fazla bir alt görev tek etkin ajana devredilir; üst/alt görev ilişkisi, ajan anlık görüntüsü, sonuç ve olay izi saklanır. |
+| Görev devri | İnsan-ajan sohbetinde en fazla bir alt görev tek yerel veya güvenilir A2A ajanına devredilir; üst/alt görev ilişkisi, hedef anlık görüntüsü, uzak kimlik/durum, sonuç ve olay izi saklanır. |
+
+### Giden A2A devri
+
+Uzak A2A hedefleri yalnızca sunucu yöneticisinin `AGENT_RUNTIME_A2A_TARGETS` ortam değişkeninde tanımlanır; model ve API gövdeleri hedef URL’si sağlayamaz. Güvenli katalog, `GET /a2a/targets` üzerinden yalnızca hedef kimliği, `kind: "a2a"` ve yetenekleri gösterir. İnsan-ajan sohbetinde model, yönetici tarafından tanımlanmış uzak yetenekleri devir isteminde kullanabilir; aynı yetenek birden fazla yerel/uzak hedefle eşleşirse istek reddedilir.
+
+Tam ortam değişkeni şeması, Agent Card doğrulaması, A2A v1 taşıma ayrıntıları ve gönderim/tekrar semantiği için [giden A2A belgesine](docs/a2a.md) bakın. Kartlar `HTTP+JSON` ve protokol `1.0` ilan etmelidir. Kimlik bilgileri yalnızca adlandırılmış sunucu ortam değişkeninden okunur; API yanıtlarına, görev anlık görüntülerine veya olaylara yazılmaz.
 
 Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işçi sürecini kullanır. Dağıtık işçiler ve harici kuyruk altyapısı bu kapsamda yoktur.
 
 ## Sonraki aşamalar
 
-1. Uzak ajan sistemleriyle A2A uyumluluğu (ayrı #25).
+1. Gelen A2A sunucusu ve çok kullanıcılı kimlik doğrulama için ayrı güvenlik tasarımı.
 2. Yük gerektirirse Redis Streams, NATS veya benzeri dağıtık kuyruk.
 3. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
 
@@ -273,4 +279,4 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olur. Yerel tek kullanıcılı sohbet arayüzü ve tek sunuculu kalıcı görev kuyruğu kullanılabilir; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir.
 
-Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve oda oluşturma/geçmiş/çalıştırma izleme arayüzüyle sınırlı grup odası sunar. MCP salt okunur araç dilimi tamamlandı; yol haritasındaki sıradaki adım ayrı #25 A2A uyumluluğudur. Çok kullanıcılı erişim ve kimlik doğrulama daha sonraki kapsamdadır; dağıtık kuyruk ancak ölçülen yük bunu gerektirirse ele alınır.
+Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve oda oluşturma/geçmiş/çalıştırma izleme arayüzüyle sınırlı grup odası sunar. MCP salt okunur araç dilimi ve güvenilir hedeflere giden A2A 1.0 dilimi tamamlandı. Çok kullanıcılı erişim ve kimlik doğrulama daha sonraki kapsamdadır; dağıtık kuyruk ancak ölçülen yük bunu gerektirirse ele alınır.

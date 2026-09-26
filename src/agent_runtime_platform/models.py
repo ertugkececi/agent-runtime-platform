@@ -163,6 +163,10 @@ class Task(Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="running")
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    remote_target_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    remote_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    remote_task_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    remote_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

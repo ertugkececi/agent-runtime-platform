@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
 
 from agent_runtime_platform.database import Database
+from agent_runtime_platform.a2a import A2AError, configured_targets
 from agent_runtime_platform.providers import ProviderRegistry, list_codex_models
 from agent_runtime_platform.mcp_tools import MCPConfigurationError, public_tool_catalog
 from agent_runtime_platform.rooms import RoomRuntimeService
@@ -59,6 +60,15 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/a2a/targets")
+    def list_a2a_targets() -> list[dict]:
+        """Return safe discovery metadata; configured URLs and credentials stay private."""
+        try:
+            return [{"id": target["id"], "kind": "a2a", "capabilities": target["capabilities"]}
+                    for target in configured_targets()]
+        except A2AError as exc:
+            raise HTTPException(status_code=503, detail="A2A target configuration is invalid.") from exc
 
     @app.get("/mcp/tools")
     def list_mcp_tools() -> list[dict]:

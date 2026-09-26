@@ -35,6 +35,15 @@ class Database:
                 connection.execute(text("ALTER TABLE agents ADD COLUMN model_reasoning_effort VARCHAR(16)"))
             if "tool_ids" not in agent_columns:
                 connection.execute(text("ALTER TABLE agents ADD COLUMN tool_ids JSON NOT NULL DEFAULT '[]'"))
+            task_columns = {column["name"] for column in inspect(self.engine).get_columns("tasks")}
+            for name, ddl in (
+                ("remote_target_id", "VARCHAR(80)"),
+                ("remote_message_id", "VARCHAR(36)"),
+                ("remote_task_id", "VARCHAR(256)"),
+                ("remote_status", "VARCHAR(32)"),
+            ):
+                if name not in task_columns:
+                    connection.execute(text(f"ALTER TABLE tasks ADD COLUMN {name} {ddl}"))
 
     @staticmethod
     def _enable_sqlite_foreign_keys(connection, _record) -> None:
