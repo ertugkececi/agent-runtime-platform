@@ -1,6 +1,6 @@
 # Agent Runtime Platform
 
-> **Durum:** Ajanlar arası mesajlaşma, yeteneğe göre keşif, yerel insan-ajan sohbeti ve sınırlandırılmış tek alt görev devri kullanılabilir. Varsayılan model sağlayıcısı ChatGPT oturumuyla çalışan Codex'tir.
+> **Durum:** Ajanlar arası mesajlaşma, yeteneğe göre keşif, yerel insan-ajan sohbeti, sınırlandırılmış tek alt görev devri ve kalıcı tek sunucu işçisi kullanılabilir. Varsayılan model sağlayıcısı ChatGPT oturumuyla çalışan Codex'tir.
 
 Agent Runtime Platform, yapay zekâ ajanlarını çalışma anında tanımlayıp yönetmek, yeteneklerine göre bulmak ve birbirleriyle izlenebilir biçimde konuşturmak için tasarlanan bir platformdur. Yeni bir ajan eklemek veya devre dışı bırakmak, her seferinde uygulama kodunu değiştirmeyi gerektirmemelidir.
 
@@ -18,7 +18,7 @@ Bir kullanıcı arayüzünden veya API'den ajan oluştur; modele, talimatlara, y
 - İnsan-ajan sohbetinde bir alt görevi, tam yetenek eşleşmesiyle bulunan tek etkin ajana devretme; bir istekte en fazla bir devir yapılır.
 - Çalıştırma durumlarını, kullanılan ajan yapılandırması anlık görüntülerini ve sıralı olay izlerini API üzerinden görüntüleme.
 
-Grup odaları, araç/MCP bağlayıcıları, arka plan işçileri ve çok kullanıcılı erişim henüz uygulanmadı. Planlanan işler “Sonraki aşamalar” bölümünde yer alır.
+Grup odaları, araç/MCP bağlayıcıları ve çok kullanıcılı erişim henüz uygulanmadı. Planlanan işler “Sonraki aşamalar” bölümünde yer alır.
 
 ## Kavramsal mimari
 
@@ -162,6 +162,12 @@ Giriş açıksa komut durumu gösterir; değilse Codex SDK üzerinden cihaz kodu
 uv run uvicorn agent_runtime_platform.main:app --app-dir src --reload
 ```
 
+Async mesajları tüketmek için ikinci bir terminalde tek worker başlatın:
+
+```bash
+uv run agent-runtime-worker
+```
+
 API belgeleri `http://127.0.0.1:8000/docs` adresinde açılır. Kontrolleri çalıştırmak için:
 
 ```bash
@@ -181,6 +187,10 @@ mkdir -p ~/.config/systemd/user
 install -m 644 deploy/systemd/user/agent-runtime-platform.service ~/.config/systemd/user/agent-runtime-platform.service
 systemctl --user daemon-reload
 systemctl --user enable --now agent-runtime-platform.service
+# Kalıcı asenkron mesajları tüketmek için işçiyi de kurun.
+install -m 644 deploy/systemd/user/agent-runtime-worker.service ~/.config/systemd/user/agent-runtime-worker.service
+systemctl --user daemon-reload
+systemctl --user enable --now agent-runtime-worker.service
 curl -fsS http://127.0.0.1:8000/health
 ```
 
@@ -202,17 +212,20 @@ sudo tailscale serve status
 1. `POST /agents` ile iki ajan oluşturun. Her biri için `name`, `instructions`, `model_provider` (varsayılan `codex`) ve `model_name` gerekir. Codex için `GET /codex/models` model ve desteklenen eforları listeler; `model_reasoning_effort` (örneğin `high`) isteğe bağlıdır ve verilmezse modelin varsayılanı kullanılır. `capabilities` isteğe bağlıdır; örneğin `{"capabilities": ["backend", "api"]}`.
 2. `POST /conversations` ile `agent_ids` listesini gönderin.
 3. `GET /agents?capability=backend` ile bu yeteneğe sahip etkin ajanları arayın. Eşleşme tamdır; yetenekler kaydedilirken ve aranırken boşluklardan arındırılıp küçük harfe dönüştürülür.
-4. `POST /conversations/{conversation_id}/messages` isteğinde `sender_agent_id`, `content` ve alıcılardan yalnızca birini gönderin: `recipient_agent_id` veya `recipient_capability`. Yetenek eşleşmesi tek bir etkin ajan bulursa o ajan konuşmaya otomatik eklenir. Hiç eşleşme yoksa `404`, birden fazla eşleşme varsa `409` döner. Kimlikle gönderimde iki ajan da önceden konuşma üyesi olmalıdır.
-5. Yanıttaki çalıştırma kimliğiyle `GET /runs/{run_id}` üzerinden mesajları, görev kayıtlarını, durum bilgisini ve olay izini okuyun. Konuşmanın tamamı `GET /conversations/{conversation_id}` üzerinden alınabilir.
+4. `POST /conversations/{conversation_id}/messages` isteğinde `sender_agent_id`, `content` ve alıcılardan yalnızca birini gönderin: `recipient_agent_id` veya `recipient_capability`. Bu mevcut senkron uçtur. Kalıcı async kabul için aynı gövdeyi `/conversations/{conversation_id}/messages/async` adresine gönderin; `202` yanıtında `id`, `status` ve `status_url` bulunur. Yetenek eşleşmesi tek bir etkin ajan bulursa o ajan konuşmaya otomatik eklenir. Hiç eşleşme yoksa `404`, birden fazla eşleşme varsa `409` döner. Kimlikle gönderimde iki ajan da önceden konuşma üyesi olmalıdır.
+5. `GET /runs/{run_id}` üzerinden mesajları, görev kayıtlarını, durum bilgisini ve olay izini okuyun. Async durum `queued`, `running`, `completed` veya `failed` olur. Konuşmanın tamamı `GET /conversations/{conversation_id}` üzerinden alınabilir.
 
 `PATCH /agents/{agent_id}` ajan ayarlarını, yeteneklerini değiştirir veya `{"enabled": false}` ile yeni çalıştırmalarda kullanılmasını engeller. Her değişiklik ajan sürümünü artırır. Çalışan her görev, başlangıçta kullandığı talimat/model/yetenek anlık görüntüsünü saklar; çalıştırma API'si talimat içeriğini döndürmez.
 
 ### İnsan-ajan sohbet API'si
 
 - `POST /chat/conversations` gövdesi `{"agent_id": "..."}` ile tek ajanlı bir sohbet başlatır.
-- `POST /chat/conversations/{conversation_id}/messages` gövdesi `{"content": "..."}` ile kullanıcı mesajını gönderir.
+- `POST /chat/conversations/{conversation_id}/messages` gövdesi `{"content": "..."}` ile senkron kullanıcı mesajı gönderir; mevcut davranış korunur.
+- `POST /chat/conversations/{conversation_id}/messages/async` aynı gövdeyi kalıcı kuyruğa ekler ve `202` ile run kimliği döndürür.
 - `GET /conversations/{conversation_id}` sohbet geçmişini, `GET /runs/{run_id}` görev durumları ve sonuçları dâhil son yanıtın çalıştırma izini döndürür.
 - Ajan bir sınırlı alt görevi tam yetenek eşleşmesi olan tek etkin ajana devredebilir; her çalıştırmada en fazla bir devir yapılır.
+
+İşçi, `agent-runtime-worker.service` systemd kullanıcı servisi olarak API'den ayrı çalışır. SQLite `queue_jobs` tablosu ilk veritabanı açılışında eklenir; mevcut veriler için yeniden oluşturma veya silme yapılmaz. İşçi yeniden başladığında yarım kalmış işleri en fazla üç toplam denemeyle sıraya alır. Model çağrısı sırasında süreç kesilirse model aynı istek için tekrar çağrılabilir; model/gelecekteki araç yan etkileri tam olarak bir kez garantili değildir. Çalıştırma başına kullanıcıya görünen yanıt ve devredilmiş alt görev kaydı yinelenmeye karşı korunur. Başarısız işler `failed` durumuna geçer.
 
 Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama ve çok kullanıcılı erişim bu dilimde yoktur.
 
@@ -228,22 +241,23 @@ Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama 
 | Ajanlar arası mesajlaşma | İki ajan arasında kimlikle veya tekil yetenek eşleşmesiyle doğrudan mesajlaşma kullanılabilir. |
 | İnsan-ajan sohbeti | Yerel tek kullanıcılı arayüzden sohbet başlatılır; konuşma geçmişi kalıcıdır. |
 | Çalıştırma izi | Durum, ajan yapılandırması anlık görüntüsü ve sıralı olaylar API'den okunabilir. |
+| Kalıcı arka plan kuyruğu | Yeni async API uçları ve ayrı tek sunucu işçisi kullanılabilir; sınırlı yeniden deneme ve başlangıç toparlaması uygulanır. |
 | Grup odası | Birden fazla ajanın aynı konuşmada koordineli çalışması planlanıyor. |
 | Görev devri | İnsan-ajan sohbetinde en fazla bir alt görev tek etkin ajana devredilir; üst/alt görev ilişkisi, ajan anlık görüntüsü, sonuç ve olay izi saklanır. |
 
-Bir sonraki uçtan uca hedef: Görevleri kalıcı kuyruk ve dağıtık çalışanlarla yürüterek servis yeniden başlasa da çalışma durumunu güvenilir biçimde sürdürmek.
+Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işçi sürecini kullanır. Dağıtık işçiler ve harici kuyruk altyapısı bu kapsamda yoktur.
 
 ## Sonraki aşamalar
 
-1. Kalıcı kuyruk ve dağıtık işçiler; yük arttığında Redis Streams, NATS veya benzeri bir bileşen değerlendirmesi.
-2. Grup odaları ve birden fazla ajanın koordinasyonu.
-3. MCP araç bağlayıcıları ve uzak ajan sistemleriyle A2A uyumluluğu.
+1. Grup odaları ve birden fazla ajanın koordinasyonu.
+2. MCP araç bağlayıcıları ve uzak ajan sistemleriyle A2A uyumluluğu.
+3. Yük gerektirirse Redis Streams, NATS veya benzeri dağıtık kuyruk.
 4. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
 
 ## Teknoloji yönü
 
 **Kararlar:** Ajan akışlarını çalıştırmak için LangGraph, HTTP API için FastAPI, veriye erişim için SQLAlchemy kullanılacak. Yerel kurulum SQLite ile başlar; aynı şema PostgreSQL'e de bağlanabilir. Ajan tanımları kayıt katmanında veri olarak tutulur ve ortak LangGraph akışı bunları çalıştırma anında yükler. Varsayılan model sağlayıcısı, ChatGPT oturumunu kullanan Codex'tir; OpenAI API sağlayıcısı da isteğe bağlıdır.
 
-Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olacak. Yerel tek kullanıcılı sohbet arayüzü mevcuttur; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir. İlk aşamada ayrı mesaj kuyruğu eklenmeyecek.
+Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olur. Yerel tek kullanıcılı sohbet arayüzü ve tek sunuculu kalıcı görev kuyruğu kullanılabilir; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir.
 
-Mevcut dilimler API ve yerel sohbet arayüzü sunar. Grup odaları, çok kullanıcılı erişim ve kimlik doğrulama, kuyrukta çalışan işler, araç bağlayıcıları/MCP, A2A ve veritabanı migration yönetimi sonraki işlerin kapsamındadır.
+Mevcut dilimler API, yerel sohbet arayüzü ve tek işçili kalıcı kuyruk sunar. Grup odaları, çok kullanıcılı erişim ve kimlik doğrulama, araç bağlayıcıları/MCP, A2A ve dağıtık kuyruk sonraki işlerin kapsamındadır.
