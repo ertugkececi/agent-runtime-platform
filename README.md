@@ -269,9 +269,9 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 ## Sonraki aşamalar
 
-1. Gelen A2A ve çok kullanıcılı erişim güvenlik tasarımı tamamlandı: [tasarım ve uygulama dilimleri](docs/inbound-a2a-multiuser-security.md). Bu yalnızca mimari dokümandır; mevcut API hâlâ anonim ve tek kullanıcılıdır. Kimlik doğrulama, sahiplik migrasyonu veya gelen A2A endpoint'i henüz uygulanmadı; internete açmayın.
-2. Dağıtık kuyruk ihtiyacını ölçülen iş hacmi ve işletim gereksinimleriyle değerlendir; Redis Streams, NATS veya benzeri seçenekleri seçmeden önce karar kaydı oluştur. Bu çalışma güvenlik tasarımından sonra gelir.
-3. Kimlik ve sahiplik dilimlerini, test edilebilir kabul ölçütleriyle ayrı uygulama işleri olarak planla; OIDC/PKCE, tenant migration ve authorization tamamlanmadan gelen A2A'yı etkinleştirme.
+1. [Gelen A2A ve çok kullanıcılı erişim güvenlik tasarımının](docs/inbound-a2a-multiuser-security.md) ilk uygulama dilimi olan **Auth/principal**: OIDC sunucu tarafı giriş/callback/çıkış, oturum, CSRF koruması ve principal/scope yönetimi. Tasarım hâlâ yalnızca mimari dokümandır; mevcut API anonim ve tek kullanıcılıdır. Kimlik doğrulama, sahiplik migrasyonu veya gelen A2A endpoint'i henüz uygulanmadı; internete açmayın.
+2. Tenant migration ve kaynak yetkilendirme dilimlerini test edilebilir kabul ölçütleriyle ayrı uygulama işleri olarak sürdür; gerekli güvenlik kontrolleri tamamlanmadan gelen A2A'yı etkinleştirme.
+3. Dağıtık kuyruk kararını yalnızca ölçümler veya açık bir çok-host/yüksek erişilebilirlik gereksinimi mevcut tasarımı yetersiz kıldığında yeniden değerlendir: [karar ve ölçüm kapısı](docs/queue-scaling-decision.md).
 4. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
 
 ## Teknoloji yönü
