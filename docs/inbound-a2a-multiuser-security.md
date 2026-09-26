@@ -1,23 +1,23 @@
 # Gelen A2A ve çok kullanıcılı erişim için güvenlik tasarımı
 **Durum:** Tasarım önerisi; bu belge kodu, endpoint'i veya veri şemasını etkinleştirmez.
-**Kapsam:** Issue #28. Mevcut API anonimdir ve tek sunucu yöneticisi/Tailscale güven sınırına dayanır.
+**Kapsam:** Issue #28. Mevcut API anonimdir ve tek platform operatörü/Tailscale güven sınırına dayanır. Bu dokümanda platform operatörü süreç düzeyindeki deployment ve secret yapılandırmasını yönetir; tenant admin yalnız kendi tenant'ındaki kullanıcı/ajan yönetimini yapar.
 Bu doküman uygulanacak kontrol modelini ve küçük uygulama dilimlerini tanımlar. Üretim dağıtımından önce tehdit modellemesi ve güvenlik incelemesi gerekir.
 
 ## 1. Bugünkü sistem ve sınır
-create_app içindeki FastAPI endpoint'leri doğrudan çalışma zamanı/DB katmanına bağlanır; kimlik doğrulama, kullanıcıya göre sorgu filtresi veya sahiplik denetimi yoktur. /, /health, /agents, /conversations, /rooms, /chat/..., /runs/{id}, /a2a/targets, /mcp/tools ve /codex/models anonim erişilebilir.
+create_app içindeki FastAPI endpoint'leri doğrudan çalışma zamanı/DB katmanına bağlanır; kimlik doğrulama, kullanıcıya göre sorgu filtresi veya sahiplik denetimi yoktur. Aşağıdaki tabloda listelenen uygulama rotalarının tümü bugün kimlik doğrulamasızdır. FastAPI varsayılan /openapi.json, /docs, /docs/oauth2-redirect ve /redoc rotaları da üretim API tanımını açığa çıkarabilir; mevcut kodda bunlar kapatılmamış veya korunmamıştır.
 SQLite/SQLAlchemy tabloları agents, agent_capabilities, conversations, conversation_members, messages, runs, run_events, human_chat_sessions/messages/runs/events, tasks, rooms, room_participants, room_runs/turns/events ve queue_jobs kayıtlarını içerir. Sahiplik sütunu yoktur; ConversationMember ajan üyeliğidir, kullanıcı üyeliği değildir.
 POST /agents hem ajan oluşturup yönetici yapılandırması gibi davranır; PATCH /agents/{id} ajanı değiştirebilir. Giden A2A yalnızca yöneticinin AGENT_RUNTIME_A2A_TARGETS kataloğunu kullanır ve henüz gelen A2A sunucusu yoktur (docs/a2a.md). Tek kalıcı worker DB kuyruğunu işler. DB başlangıcında SQLite ALTER TABLE uyumluluk adımları vardır; migration framework bulunmaz.
 **Mevcut ve gelecek sınırı:** Bu PR yalnızca tasarım dokümanı ve README yol haritasıdır. Yeni endpoint, kimlik middleware'i, sahiplik sütunu/migrasyonu, token, CORS veya servis değişikliği bu PR'ın parçası değildir. Şu anki uygulama güvenli şekilde çok kullanıcıya açılamaz; Tailscale ağ erişimi uygulama seviyesinde kimlik doğrulama yerine geçmez.
 
 ## 2. Tehdit modeli ve güven sınırları
 Korunacak varlıklar: ajan talimat/model/araç yetkileri ve katalog yapılandırması; kullanıcı konuşma/oda/mesaj/görev/run/event içerikleri; Codex/provider kimlik bilgileri ve A2A token'ları; kuyruk bütünlüğü, maliyet ve kullanılabilirlik; denetim kayıtları.
-Aktörler: kimliği doğrulanmamış istemci; oturum açmış kullanıcı; yönetici; kimliği doğrulanmış A2A makine istemcisi; uygulama API'si ve ayrı worker; model/ajan çıktısı; yapılandırılmış uzak A2A hedefi; DB/host operatörü.
+Aktörler: kimliği doğrulanmamış istemci; oturum açmış tenant kullanıcısı; tenant admin; platform operatörü (process/global config ve secret sahibi); sınırlı service account (worker/otomasyon); ayrı A2A client principal; uygulama API'si/worker; model/ajan çıktısı; yapılandırılmış uzak A2A hedefi; DB/host operatörü.
 Ana tehditler: IDOR ve çapraz kiracı okuma/yazma; kullanıcının ajan, model, araç ya da uzak hedef yetkisini artırması; CSRF/XSS/oturum çalma; çalınan/geniş kapsamlı bearer token ve tekrar; kötü niyetli Agent Card veya A2A mesajıyla SSRF; sahte istemci kimliği; prompt enjeksiyonu; aşırı görev/worker/kota tüketimi; içerik ve sırların log/trace yanıtlarına sızması; yanlış tenant'a event/polling yanıtı.
 Güven varsayımları: TLS anahtarları, OIDC issuer ve imzalama anahtarları, sunucu/worker host'u ve DB operatörü güvenilir. Tenant ID, e-posta, agent id veya A2A messageId istemciden geldi diye güvenilir kimlik sayılmaz. Ajan/model içeriği hiçbir zaman yetki kararı değildir. Uzak A2A cevapları güvenilmeyen veri kabul edilir.
 Güven sınırları: Browser ↔ HTTPS/API; OIDC sağlayıcı ↔ callback; API ↔ DB; API ↔ kuyruk worker; M2M istemci ↔ A2A listener; uygulama ↔ yapılandırılmış uzak A2A origin'i. Kuyruk mesajlarıyla worker'a taşınan principal ve tenant bağlamı sunucu tarafından yazılmış kalıcı kimlik olmalıdır.
 ### Kötüye kullanım senaryoları ve temel kontroller
 - Kullanıcı başka birinin conversation_id veya run_id değerini tahmin eder: tüm kaynak sorguları tenant ve sahiplik filtresiyle; hassas kaynaklarda 404.
-- Normal kullanıcı agent tool listesi ya da enabled alanını değiştirir: public kullanıcı yalnızca kendi çalışma alanı ajanlarını yönetir; global katalog/sağlayıcı/MCP/A2A konfigürasyonu admin/service-account işlemidir.
+- Normal kullanıcı agent tool listesi ya da enabled alanını değiştirir: normal kullanıcı yayımlanmış tenant ajanlarını yalnızca çalıştırır; tenant admin ajan kataloğunu yönetir. Process-global katalog/sağlayıcı/MCP/A2A config ve secret yalnız platform operatörü işlemidir.
 - Cross-site sayfa oturum cookie'siyle mesaj kuyruğa ekler: CSRF token + Origin kontrolü + SameSite cookie.
 - A2A token'ı başka tenant veya method için kullanılır: issuer/subject, audience, tenant, scopes ve exp/nbf doğrulanır; method başına scope; varsayılan deny.
 - Uzaktaki Card localhost/metadata IP'ye yönlendirir: gelen A2A Card URL kabul etmez; giden hedefte allowlist ve DNS rebinding kontrolleri korunur. Redirect, private/link-local/reserved IP kaçışı engellenir.
@@ -28,8 +28,9 @@ Güven sınırları: Browser ↔ HTTPS/API; OIDC sağlayıcı ↔ callback; API 
 ## 3. Kimlik türleri ve yetki kararı
 Her istekte doğrulanmış principal nesnesi oluştur: {kind, subject, tenant_id, scopes, authn, credential_id}. DB sorgusu principal tenant'ına göre scope edilir; body içindeki owner_id, tenant_id, sender agent veya principal alanı reddedilir. Kimlik yoksa 401; bilinen ama kapsamı olmayan eylem 403; başka tenant kaynağı 404; aynı tenant'ta görünür fakat yasaklı işlem 403. HTTP 404'ün varlığı gizlemek için kullanılmasına RFC 9110 izin verir.
 **Human user:** OIDC iss+sub birleşimiyle kalıcı ID; e-posta değişebilir, kimlik anahtarı değildir. Workspace/tenant membership ve rol server DB'sinden alınır.
-**Tenant admin:** yönetim API'sinde açık rol. İnsan oturumundan güçlü kimlik doğrulama ve ayrı audit; provider secret, MCP/A2A katalogları ve global ayarları sadece admin/service account yönetir.
-**Service account:** worker veya yönetim otomasyonu için ayrı issuer subject/credential; browser cookie kabul etmez. Worker kullanıcı adına işlem yapmaz; queued request'ten server-stamped tenant/principal taşır.
+**Tenant admin:** yalnız kendi tenant'ındaki yayımlanmış agent kataloğunu ve üyelik/policy ayarlarını yönetir; başka tenant verisini göremez. Bu rol process-wide provider, MCP, A2A target kataloglarını, env secret'larını, issuer/proxy/TLS ayarlarını veya global model izinlerini değiştiremez.
+**Platform operator:** sunucu deployment'ını ve process-global provider credentials, AGENT_RUNTIME_MCP_SERVERS, AGENT_RUNTIME_A2A_TARGETS, OIDC issuer, trusted proxy, TLS ve global policy'yi yönetir. Operatör kimliği ayrı deployment/control plane'den gelir; normal app tenant role değildir. Global secret sadece operator-managed environment/secret store'da, hiçbir user/admin/service API yanıtında değil.
+**Service account:** worker/automation için ayrı issuer subject/credential; browser cookie kabul etmez. İlk dilimde dış HTTP service-account erişimi tüm route'larda reddedilir. Kuyruk worker'ı HTTP principal değildir; iç DB işlemleri için minimum process identity kullanır ve queued job'daki user/tenant context immutable audit context'tir. Gelecekte HTTP service-account erişimi ayrı incelenen işte route bazında açılmalıdır; tenant user'ı impersonate edemez.
 **A2A client principal:** opaque client ID + tenant + grant kayıtlı, döndürülebilir secret/token. İstemci adı/messageId kimlik sayılmaz. OAuth client credentials gelecekte tercih edilen issuance olabilir; ilk M2M dilimi kısa ömürlü/rotatable opaque bearer da kullanabilir; token hash'i saklanır ve revoke kontrolü olur.
 **Ajan:** principal değildir. Yerel agent ID, A2A caller kimliği, konuşma sahibi ya da admin rolü elde etmez. Agent-to-agent mesajı yalnız kullanıcı/sistem principal'ının önceden verdiği izinle yürür.
 Scope örnekleri: agents:read/write, conversations:read/write, rooms:read/write, runs:read, a2a:card:read, a2a:message:send, a2a:task:read. Scope tenant sınırını geçemez. Role ve ownership denetimi handler ve DB filtreli fetch'te uygulanır.
@@ -49,43 +50,61 @@ Her A2A client için tenant_id, allowed agent/catalog seti, maximum concurrency,
 ## 6. Kaynak sahipliği ve endpoint matrisi
 Migration öncesinde canlı DB yedeği, tablo/row sayımı, snapshot checksum, geri yükleme denemesi ve read-only dry run şarttır. Önce tek mevcut operatör için sabit legacy tenant ve owner_subject oluştur; eski ajanlar/konuşmalar/odalar aynı legacy tenant'a bağlanır. Eski konuşma katılımcılarını sahibi sayma. Aktif kullanıcı daveti olmadan veriyi diğer tenant'a taşıma.
 Backfill tamamlanmadan yeni auth kodu açılmaz; kolonlar nullable eklenir, backfill/doğrulanır, sonra NOT NULL/index/FK olur. SQLite için DB'yi durduran transaction/backup'lı rebuild migration planı; create_all/ad hoc ALTER ile tenant migration yapılmaz. Dual-read/legacy bypass kaldırma release gate olmalı.
-| Kaynak ve route grubu | User | Tenant admin | M2M A2A | Sahiplik ve hata |
-|---|---|---|---|---|
-| GET / | UI sign-in | aynı | deny | UI auth challenge |
-| GET /health | public minimal veya internal-only | aynı | same | içerik sızdırmaz |
-| GET /agents | tenant safe catalog | tenant catalog | deny | agent config filtresi |
-| GET /codex/models | admin only | allow | deny | provider/model metadata |
-| GET /mcp/tools | admin only | allow | deny | yönetici MCP catalog |
-| GET /a2a/targets | tenant safe subset | allow | deny | URL/credentials never returned |
-| POST /agents | deny (admin-managed catalog) | create | deny | tenant server principal'dan |
-| PATCH /agents/{id} | deny | update | deny | cross-tenant 404 |
-| POST /conversations | own agents | allow | deny | tenant + owner principal |
-| GET /conversations/{id} | owner/member policy | audited support | deny | foreign 404 |
-| POST /chat/conversations | own agent | allow | deny | conversation sahibi |
-| POST /chat/conversations/{id}/messages | owner only | audited support | deny | parent owner join |
-| POST /conversations/{id}/messages | owner/authorized agent | admin support | deny | sender agent body ile principal olmaz |
-| POST /conversations/{conversation_id}/messages/async | owner/authorized agent | admin support | deny | queued principal stamped |
-| POST /chat/conversations/{id}/messages/async | owner only | admin support | deny | queued principal stamped |
-| POST /rooms | own agents | allow | deny | room tenant + owner |
-| GET /rooms/{id} | owner | audited support | deny | foreign 404 |
-| POST /rooms/{id}/runs | owner | support audited | deny | room parent filter |
-| GET /rooms/{id}/runs | owner | support audited | deny | room parent filter |
-| GET /runs/{id} | run parent owner | support audited | deny | all run types filtered |
-| messages/tasks/events | parent owner | support audited | deny | no direct unscoped lookup |
-| GET /.well-known/agent-card.json | safe public Card | Card config | safe public Card | no private agents/secrets |
-| POST /message:send | deny | explicit tooling scope | a2a:message:send | client+tenant task owner |
-| GET /tasks/{id} | deny | task read scope | a2a:task:read | mismatched task 404 |
-API path listesi koddan türetilmiştir; implementation öncesi route inventory testinden geçir. Parent kaynak sorguları SQL seviyesinde tenant/owner ile daraltılmalı; önce global get edip sonra response filtrelemek kabul edilmez. Parent-child ilişki aynı tenant transaction içinde doğrulanır. Admin support erişimi sebep kodu ve audit ister; normal tenant-admin başka tenant içeriğini göremez.
-Önerilen ilk policy: tenant içi paylaşılan agent kataloğu, agent oluşturma ve talimat/araç/model düzenleme tenant admin'inde; normal kullanıcı yalnız admin'in yayımladığı tenant ajanlarını çalıştırır. Böylece kullanıcı gönderdiği agent ID veya capabilities ile sahiplik/araç yetkisi kazanmaz. Admin ayarlarından verilen araç ve model yetkisi kullanıcı tarafından genişletilemez.
-Migration'da tenant parent'tan belirlenebilir: message→conversation; run→conversation; human chat session→conversation; tasks→human chat run/conversation; events→run; room participant→room; room run/turn/event→room/run; queue job→run parent. Agent global mi tenant-scoped mı kararı verilmeden FK/unique index yapılmamalı. Composite index tenant_id ile başlamalı.
+| Route | Anonymous | Human user | Tenant admin | Platform operator | Service account | A2A client |
+|---|---|---|---|---|---|---|
+| GET / | Public static shell/sign-in only; no user data | sign-in then own UI | own tenant UI | audited operator UI | deny | deny |
+| GET /health | Public minimal liveness only; network filtering is optional defense-in-depth | same | same | same | deny | deny |
+| GET /agents | 401 | published agents in own tenant | own tenant catalog | audited break-glass support | deny | deny |
+| POST /agents | 401 | 403 | create tenant agents | audited break-glass | deny | deny |
+| PATCH /agents/{id} | 401 | 403 | update own-tenant agents | audited break-glass | deny | deny |
+| GET /conversations/{id} | 401 | owner only | owner only; non-owner denied | audited break-glass | deny | deny |
+| POST /conversations | 401 | own tenant, published agents | own tenant | audited support only | deny | deny |
+| POST /chat/conversations | 401 | own tenant, published agent | own tenant | audited support only | deny | deny |
+| POST /chat/conversations/{id}/messages | 401 | conversation owner only | owner only; non-owner denied | audited break-glass | deny | deny |
+| POST /chat/conversations/{id}/messages/async | 401 | conversation owner only | owner only; non-owner denied | audited break-glass | deny | deny |
+| POST /conversations/{id}/messages | 401 | conversation owner only | owner only; non-owner denied | audited break-glass | deny | deny |
+| POST /conversations/{id}/messages/async | 401 | conversation owner only | owner only; non-owner denied | audited break-glass | deny | deny |
+| POST /rooms | 401 | own tenant agents | own tenant | audited support only | deny | deny |
+| GET /rooms/{id} | 401 | owner only | owner only; non-owner denied | audited break-glass | deny | deny |
+| POST /rooms/{id}/runs | 401 | room owner only | room owner only; non-owner denied | audited break-glass | deny | deny |
+| GET /rooms/{id}/runs | 401 | room owner only | room owner only; non-owner denied | audited break-glass | deny | deny |
+| GET /runs/{id} | 401 | owning conversation/room owner | same owner rule | audited break-glass | deny | deny |
+| GET /codex/models | 401 | 403 | 403 | process catalog | deny | deny |
+| GET /mcp/tools | 401 | 403 | 403 | process catalog | deny | deny |
+| GET /a2a/targets | 401 | safe tenant subset only | safe tenant subset | process catalog | deny | deny |
+| GET /openapi.json, /docs, /docs/oauth2-redirect, /redoc | 404 (disabled) | 404 | 404 | 404; private operator plane is a separate future surface | 404 | 404 |
+| GET /.well-known/agent-card.json | public safe Card | same | same | manages Card | deny | public safe Card |
+| POST /message:send | 401 | deny | deny | deny; separate tooling requires new reviewed surface | deny | require a2a:message:send + tenant/client allowlist |
+| GET /tasks/{id} | 401 | deny | deny | explicit audited support | deny | require a2a:task:read and same creator+tenant |
+| Internal queue worker / task execution | not a route | not a route | not a route | operator deploys process | internal minimum DB/process identity; job-bound user+tenant context | not a route |
+
+All app routes today (including existing methods listed above) and FastAPI docs/OpenAPI defaults are anonymous because no auth is installed. The proposed policy is future behavior; no auth exists in this PR. Disable FastAPI schema/docs defaults in production so they return 404; a private operator documentation plane can be designed later. No external HTTP service account is permitted in the first slice; every service-account route decision is deny. Future machine service-account access requires a separate reviewed issue, explicit scope, threat review, and allowlist. Public root serves a static sign-in shell only; /health exposes no dependencies, versions, counts, or secrets. A platform operator is distinct from a tenant admin: global provider/model secrets, AGENT_RUNTIME_MCP_SERVERS, AGENT_RUNTIME_A2A_TARGETS, OIDC, TLS/proxy and process policy are operator-only. Tenant admins manage only their tenant-published agents and membership. Operator break-glass access to tenant content is separately authenticated, reason-coded, audited, and not normal platform-role access.
+
+Conversation authorization is owner-only in the first schema slice: add conversation owner subject + tenant; do not infer human access from ConversationMember, which contains agent IDs only. The owner may read, message, queue work, and access child messages/tasks/runs/events. Tenant admins who are not the owner are denied; platform operator break-glass is the only support path. Future sharing requires a separate explicit user-membership/invitation model and tests. POST/PATCH agent policy aligns with this: tenant admin manages the shared published catalog; ordinary users may read and run published agents but cannot create or edit them. The submitted sender_agent_id is only a resource reference: validate it is an enabled same-tenant agent explicitly included in the conversation's agent membership and permitted to send; on human-chat paths validate the configured HumanChatSession target instead. Never treat sender_agent_id as the caller principal or proof of identity.
+
+The existing outgoing A2A client has a platform-operator-configured allow_private exception for explicitly approved Tailscale/private targets. Preserve this narrow exception only for operator-owned target configuration; never expose it as a tenant/user request option. Revalidate DNS on each connection, reject redirects and public/private address changes, and keep endpoint URLs and tokens private.
+API path listesi mevcut api.py'den türetilmiştir; implementation öncesi route inventory testinden geçir. Parent kaynak sorguları SQL seviyesinde tenant/owner ile daraltılmalı; önce global get edip sonra response filtrelemek kabul edilmez. Parent-child ilişki aynı tenant transaction içinde doğrulanır. Tenant admin support erişimi aynı owner kuralına tabidir; platform operatörünün break-glass erişimi reason-coded audit ister.
+Migration'da tenant parent'tan belirlenebilir: message→conversation; run→conversation; human chat session→conversation; tasks→human chat run/conversation; events→run; room participant→room; room run/turn/event→room/run; queue job→run parent. Agent'lar tenant-scoped shared catalog'ta tutulur. Composite index tenant_id ile başlamalı.
 
 ## 7. Gelen A2A v1 minimal profil
-A2A 1.0 HTTP+JSON binding'i hedefle; implementasyondan önce resmi spec ve server conformance fixtures ile exact wire format / media type doğrula. Her istek A2A-Version: 1.0 taşımalı; SendMessage JSON gövdesi ve application/a2a+json media type, GetTask ise spec'in HTTP+JSON GET/query binding'ine uygun olmalı. HTTP hataları application/a2a+json içindeki google.rpc.Status ProtoJSON biçimini ve A2A ErrorInfo ayrıntılarını kullanmalı. Agent Card securitySchemes/securityRequirements gerçek Bearer doğrulamasıyla eşleşmeli. Bu servis A2A Server, uzağı arayan remote A2A Client olacaktır. İlk profil:
+A2A 1.0 HTTP+JSON binding'i hedefle; implementasyondan önce resmi spec ve server conformance fixtures ile exact wire format / media type doğrula. A2A-Version: 1.0 header veya aynı adlı version query parameter ile taşınabilir; server iki biçimi de tanımalı ve aynı istekte çelişen değerleri reddetmelidir. Örneklerde header kullanılır. SendMessage JSON gövdesi application/a2a+json media type kullanır; GetTask spec'in HTTP+JSON GET/query binding'ine uyar. HTTP hataları application/a2a+json içindeki google.rpc.Status ProtoJSON biçimini ve A2A ErrorInfo ayrıntılarını kullanmalı. Agent Card securitySchemes/securityRequirements gerçek Bearer doğrulamasıyla eşleşmeli. Bu servis A2A Server, uzağı arayan remote A2A Client olacaktır. İlk profil:
 - GET /.well-known/agent-card.json: stable service identity, version, public skills, HTTP+JSON 1.0 interface ve gerçek authentication requirement. Global Card shared service capability sunar; kullanıcıya özel agent'ları ifşa etmez.
 - POST /message:send: Message içinden messageId, ROLE_USER ve yalnız plain text parts kabul et; media/file/data parts, context injection ve URL reddedilir. Standard optional tenant alanı seçilmiş AgentInterface Card'da tenant ilan ediyorsa aynı opaque değere eşleşmelidir; yoksa tenant parametresi kabul edilmez. Bu protokol alanı authenticated principal'ın tenant/authorization kararının yerine geçmez. İstek doğrulanmış M2M principal ile allowlist'e bağlanır.
-- SendMessage configuration.returnImmediately=true ise task oluşturulduktan sonra hemen dönülebilir. Alan false veya yoksa server terminal ya da interrupted duruma dek beklemelidir; deadline dolarsa working task döndürüp kuralı ihlal etme: kalıcı task'ı koru, 503 retryable google.rpc.Status + RetryInfo / sabit ErrorInfo döndür, aynı messageId ile güvenli retry'ı destekle. Server-side deadline ve client disconnect görevi kendiliğinden silmez.
+- SendMessage configuration.returnImmediately=true ise server task oluşturulduktan hemen sonra dönmek ZORUNDADIR. Alan false veya yoksa server terminal ya da interrupted duruma dek beklemelidir; deadline dolarsa working task döndürüp kuralı ihlal etme: kalıcı task'ı koru, 503 retryable google.rpc.Status + RetryInfo / sabit ErrorInfo döndür, aynı messageId ile güvenli retry'ı destekle. Server-side deadline ve client disconnect görevi kendiliğinden silmez.
 - GET /tasks/{id}: task creator principal + tenant sahipliği doğrulanır; varsa seçili AgentInterface tenant değeri spec'e uygun query param olarak doğrulanır; yalnız task state ve izin verilen text artifact döndürülür. Stream, cancel, push notification, extended Card, list tasks, multi-turn context, file transfer ve OAuth dance ilk dilimde desteklenmez/advertise edilmez.
-A2A terminal state'leri completed, failed, canceled, rejected'tir. input-required ve auth-required interrupted durumlarıdır; internal queued/running dışarıya working map edilir. Task state transition tek yönlü; worker retry aynı task'ı tamamlar.
+A2A wire state enum değerleri TASK_STATE_UNSPECIFIED, TASK_STATE_SUBMITTED, TASK_STATE_WORKING, TASK_STATE_COMPLETED, TASK_STATE_FAILED, TASK_STATE_CANCELED, TASK_STATE_REJECTED, TASK_STATE_INPUT_REQUIRED ve TASK_STATE_AUTH_REQUIRED'dir. UNSPECIFIED belirsiz durumdur; server task'lara bunu atamaz. Terminal state'ler COMPLETED/FAILED/CANCELED/REJECTED; INPUT_REQUIRED ve AUTH_REQUIRED interrupted durumlarıdır. Internal queued/running dışarıya TASK_STATE_WORKING map edilir. Task state transition tek yönlü; worker retry aynı task'ı tamamlar.
+Minimal wire shape (yalnız örnek alanlar; conformance fixture sürümlenmeli):
+
+SendMessage immediate response:
+```json
+{"task":{"id":"task-uuid","contextId":"context-uuid","status":{"state":"TASK_STATE_WORKING"}}}
+```
+
+GetTask HTTP+JSON isteği `GET /tasks/task-uuid?historyLength=0` ile yapılır (AgentInterface tenant ilan ediyorsa `tenant` query parametresi de eklenip eşleşmesi kontrol edilir). Minimal response:
+```json
+{"id":"task-uuid","contextId":"context-uuid","status":{"state":"TASK_STATE_COMPLETED"},"artifacts":[{"artifactId":"artifact-uuid","parts":[{"text":"Result"}]}]}
+```
+
 ### Message kimliği ve idempotency
 Client messageId stable retry anahtarıdır; unique constraint en az (tenant_id, client_id, message_id) ile tutulur. Aynı key + aynı canonical request digest tekrar gelirse aynı task/sonuç/Location döner; aynı key + farklı payload 409. Duplicate check ve task/queue kaydı tek DB transaction'ında unique constraint ile atomik yapılır. Digest accepted fields üzerinden hesaplanır, bearer dahil edilmez. Retention penceresi konfigüre ve belgeli olsun; idempotency kaydı task'tan kısa yaşayıp duplicate açığı bırakmamalı.
 Timeout, connection reset veya worker çökmesiyle sonuç belirsizse aynı messageId ile retry; duplicate güvence verilemiyorsa otomatik yeniden yürütmeyi durdur ve submission_unknown status + audit ile operatör müdahalesi iste. İçerik/sonuç cache'de hassas kabul edilir ve tenant/client ACL'den geçer.
