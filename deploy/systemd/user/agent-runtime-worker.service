@@ -9,6 +9,7 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/opc/apps/agent-runtime-platform/.venv/bin/agent-runtime-worker
 Restart=on-failure
 RestartSec=3
+KillMode=mixed
 TimeoutStopSec=300
 
 [Install]

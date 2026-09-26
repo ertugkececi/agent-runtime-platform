@@ -631,6 +631,38 @@ class AgentRuntimeService:
             }
 
     def _invoke_model(self, state: MessagingState) -> dict[str, Any]:
+        # Once a delegated child is persisted, retries must resume that exact intent.
+        # Asking the parent model to plan again could return plain text or a different
+        # handoff and silently bypass/replace a subtask that already has side effects.
+        with self.database.session() as session:
+            chat_run = session.get(HumanChatRun, state["run_id"])
+            if chat_run is not None:
+                root_task = session.scalar(
+                    select(Task).where(
+                        Task.root_run_id == chat_run.id,
+                        Task.parent_task_id.is_(None),
+                    )
+                )
+                if root_task is not None:
+                    child_task = session.scalar(
+                        select(Task).where(
+                            Task.root_run_id == chat_run.id,
+                            Task.parent_task_id == root_task.id,
+                        )
+                    )
+                    if child_task is not None:
+                        request = HandoffRequest(
+                            capability=child_task.capability or "",
+                            task=child_task.objective,
+                        )
+                        _append_human_chat_event(
+                            session,
+                            chat_run,
+                            "handoff_resumed",
+                            {"task_id": child_task.id, "status": child_task.status},
+                        )
+                        session.commit()
+                        return {"handoff_request": request}
         output = self._call_provider(
             run_id=state["run_id"],
             agent=state["target_config"],
@@ -848,6 +880,11 @@ class AgentRuntimeService:
                     }, ensure_ascii=False),
                 })
                 return {"history": history, "allow_handoff": False}
+            previous_task_status = child_task.status
+            child_task.status = "running"
+            child_task.error_code = None
+            child_task.completed_at = None
+            child_task.result = None
             existing_member = session.get(
                 ConversationMember,
                 {"conversation_id": chat_run.conversation_id, "agent_id": recipient.id},
@@ -871,8 +908,12 @@ class AgentRuntimeService:
             _append_human_chat_event(
                 session,
                 chat_run,
-                "delegated_task_started",
-                {"task_id": child_task.id, "parent_task_id": root_task.id},
+                "delegated_task_resumed" if existing_child is not None else "delegated_task_started",
+                {
+                    "task_id": child_task.id,
+                    "parent_task_id": root_task.id,
+                    **({"previous_status": previous_task_status} if existing_child is not None else {}),
+                },
             )
             session.commit()
 

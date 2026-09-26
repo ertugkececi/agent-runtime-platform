@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -8,8 +9,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from agent_runtime_platform.api import create_app
-from agent_runtime_platform.models import HumanChatMessage, HumanChatRun, QueueJob, Task
+from agent_runtime_platform.models import Agent, HumanChatMessage, HumanChatRun, QueueJob, Task
 from agent_runtime_platform.providers import HandoffRequest, ProviderRegistry
+from agent_runtime_platform.runtime import _agent_snapshot
 from agent_runtime_platform.queue_worker import (
     WorkerAlreadyRunning, acquire_worker_lock, claim_one, recover_interrupted_jobs,
 )
@@ -295,5 +297,54 @@ def test_startup_recovery_exhaustion_fails_run_job_and_root_task_together(tmp_pa
         ))
         assert job.status == run.status == root_task.status == "failed"
         assert job.last_error == run.error_code == root_task.error_code == "worker_interrupted"
+    client.close()
+    app.state.database.dispose()
+
+
+def test_graph_retry_resumes_persisted_child_when_parent_model_returns_plain_text(tmp_path):
+    provider = QueueProvider()
+    _url, app, client, conversation_id = setup_chat(tmp_path, provider)
+    delegated = client.post("/agents", json={
+        "name": "Backend", "instructions": "Do backend work.", "model_provider": "openai",
+        "model_name": "test-model", "capabilities": ["backend"],
+    }).json()
+    run_id = client.post(
+        f"/chat/conversations/{conversation_id}/messages/async", json={"content": "Delegate"}
+    ).json()["id"]
+    assert claim_one(app.state.runtime) == run_id
+
+    # This persisted child represents a prior attempt interrupted during delegation.
+    with app.state.database.session() as session:
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == run_id, Task.parent_task_id.is_(None)
+        ))
+        delegate_agent = session.get(Agent, delegated["id"])
+        child = Task(
+            root_run_id=run_id, parent_task_id=root_task.id, conversation_id=conversation_id,
+            agent_id=delegate_agent.id, capability="backend", objective="Persisted original work",
+            config_snapshot=_agent_snapshot(delegate_agent), status="failed",
+            error_code="provider_error", completed_at=datetime.now(timezone.utc), result="stale failure",
+        )
+        session.add(child)
+        session.commit()
+
+    # The fake provider returns plain text for every call. The graph must skip
+    # parent planning, resume the saved child intent, then finalize with its result.
+    app.state.runtime.execute_queued_run(run_id)
+    result = app.state.runtime.get_run(run_id)
+    assert result["status"] == "completed"
+    phases = [event["payload"].get("phase") for event in result["events"] if event["type"] == "model_call_started"]
+    assert phases == ["delegated_task", "handoff_finalization"]
+    assert provider.calls == 2
+    with app.state.database.session() as session:
+        persisted_child = session.get(Task, child.id)
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == run_id, Task.parent_task_id.is_(None)
+        ))
+        assert persisted_child.status == "completed"
+        assert persisted_child.error_code is None
+        assert persisted_child.completed_at is not None
+        assert persisted_child.result == "queued answer"
+        assert root_task.status == "completed"
     client.close()
     app.state.database.dispose()
