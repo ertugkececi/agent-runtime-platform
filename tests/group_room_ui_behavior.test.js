@@ -18,6 +18,7 @@ const runListSource = functionSource("roomRunsFromPayload", "payload");
 const statusLabelSource = functionSource("roomRunLabel", "status");
 const turnSplitSource = functionSource("splitRoomTurns", "turns");
 const orderedIdsSource = functionSource("orderedRoomAgentIds", "");
+const oldestFirstSource = functionSource("roomRunsOldestFirst", "payload");
 
 test("room history accepts both list and wrapped API responses", () => {
   const helpers = new Function(`${runListSource}; return roomRunsFromPayload;`)();
@@ -25,6 +26,17 @@ test("room history accepts both list and wrapped API responses", () => {
   assert.deepEqual(helpers(runs), runs);
   assert.deepEqual(helpers({ runs }), runs);
   assert.deepEqual(helpers({ items: runs }), runs);
+});
+
+test("newest-first API history is rendered oldest-first and preserves the newest status", () => {
+  const ordered = new Function(`${runListSource}; ${oldestFirstSource}; return roomRunsOldestFirst;`)({});
+  const newestFirst = [
+    { id: "run-3", status: "running" },
+    { id: "run-2", status: "completed" },
+    { id: "run-1", status: "failed" },
+  ];
+  assert.deepEqual(ordered(newestFirst).map((run) => run.id), ["run-1", "run-2", "run-3"]);
+  assert.equal(ordered(newestFirst).at(-1).status, "running");
 });
 
 test("room status labels cover queue lifecycle", () => {
@@ -123,7 +135,7 @@ test("group task submit ignores a duplicate while its history preflight is pendi
     const chatModeButton = {}, roomModeButton = {};
     const document = { getElementById: () => ({}) };
     let activeRoomId = "room-1", activeRoomRunId = "", roomRunInFlight = false;
-    let roomSubmissionUncertain = false, viewMode = "room", viewGeneration = 1;
+    let roomSubmissionUncertain = false, roomHistoryLoading = false, viewMode = "room", viewGeneration = 1;
     let roomRuns = [];
     ${runListSource}
     ${submitRoomSource}
@@ -137,4 +149,42 @@ test("group task submit ignores a duplicate while its history preflight is pendi
   await first;
   assert.equal(postCalls, 1);
   assert.deepEqual(state.monitored, [["run-1", "room-1", 1]]);
+});
+
+test("preflight adopts the newest queued or running run without posting", async () => {
+  let postCalls = 0;
+  const state = { monitored: [], active: "" };
+  const request = async (path, options = {}) => {
+    if (options.method === "POST") {
+      postCalls += 1;
+      return { id: "unexpected", status: "queued" };
+    }
+    if (path.endsWith("/runs")) return { runs: [
+      { id: "run-new", content: "Other task", status: "running" },
+      { id: "run-old", content: "Earlier task", status: "queued" },
+    ] };
+    return { id: "run-new", content: "Other task", status: "running", turns: [] };
+  };
+  const messageInput = { value: "Review this design", disabled: false, focus() {} };
+  const sendButton = { disabled: false };
+  const submit = new Function("request", "messageInput", "sendButton", "state", `
+    const setStatus = () => {};
+    const renderRoomRuns = () => {};
+    const showRoomRunState = (run) => { state.active = run.id; };
+    const monitorRoomRun = (...args) => state.monitored.push(args);
+    const chatModeButton = {}, roomModeButton = {};
+    const document = { getElementById: () => ({}) };
+    let activeRoomId = "room-1", activeRoomRunId = "", roomRunInFlight = false;
+    let roomSubmissionUncertain = false, roomHistoryLoading = false, viewMode = "room", viewGeneration = 1;
+    let roomRuns = [];
+    ${runListSource}
+    ${submitRoomSource}
+    return { submitRoomTask, getRuns: () => roomRuns };
+  `)(request, messageInput, sendButton, state);
+
+  await submit.submitRoomTask();
+  assert.equal(postCalls, 0);
+  assert.equal(state.active, "run-new");
+  assert.deepEqual(state.monitored, [["run-new", "room-1", 1]]);
+  assert.deepEqual(submit.getRuns().map((run) => run.id), ["run-new"]);
 });
