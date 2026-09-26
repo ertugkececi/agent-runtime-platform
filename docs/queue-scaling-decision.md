@@ -1,6 +1,7 @@
 # Queue scaling decision
 
-**Decision date:** 2026-09-26 18:32 UTC  
+**Decision date:** 2026-09-26 18:32 UTC
+
 **Status:** Keep the current SQLite queue and one worker on the application host. Revisit scaling only when measured workload or an explicit operating requirement calls for it.
 
 ## Evidence at decision time
