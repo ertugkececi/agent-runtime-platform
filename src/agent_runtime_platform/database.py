@@ -28,12 +28,13 @@ class Database:
             event.listen(self.engine, "connect", self._enable_sqlite_foreign_keys)
         self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False, class_=Session)
         Base.metadata.create_all(self.engine)
-        # Existing installations were created before agents had an effort column.
-        if "model_reasoning_effort" not in {
-            column["name"] for column in inspect(self.engine).get_columns("agents")
-        }:
-            with self.engine.begin() as connection:
+        # Existing installations were created before agents had effort and MCP grants.
+        agent_columns = {column["name"] for column in inspect(self.engine).get_columns("agents")}
+        with self.engine.begin() as connection:
+            if "model_reasoning_effort" not in agent_columns:
                 connection.execute(text("ALTER TABLE agents ADD COLUMN model_reasoning_effort VARCHAR(16)"))
+            if "tool_ids" not in agent_columns:
+                connection.execute(text("ALTER TABLE agents ADD COLUMN tool_ids JSON NOT NULL DEFAULT '[]'"))
 
     @staticmethod
     def _enable_sqlite_foreign_keys(connection, _record) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _normalize_capabilities(values: list[str]) -> list[str]:
@@ -20,6 +20,8 @@ def _normalize_capabilities(values: list[str]) -> list[str]:
 
 
 class AgentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=500)
     instructions: str = Field(min_length=1, max_length=20_000)
@@ -28,6 +30,7 @@ class AgentCreate(BaseModel):
     model_reasoning_effort: Literal["low", "medium", "high", "xhigh", "max", "ultra"] | None = None
     enabled: bool = True
     capabilities: list[str] = Field(default_factory=list, max_length=30)
+    tool_ids: list[str] = Field(default_factory=list, max_length=50)
 
     @field_validator("name", "model_name")
     @classmethod
@@ -52,6 +55,8 @@ class AgentCreate(BaseModel):
 
 
 class AgentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=500)
     instructions: str | None = Field(default=None, min_length=1, max_length=20_000)
@@ -60,6 +65,7 @@ class AgentUpdate(BaseModel):
     model_reasoning_effort: Literal["low", "medium", "high", "xhigh", "max", "ultra"] | None = None
     enabled: bool | None = None
     capabilities: list[str] | None = Field(default=None, max_length=30)
+    tool_ids: list[str] | None = Field(default=None, max_length=50)
 
     @field_validator("name", "model_name")
     @classmethod

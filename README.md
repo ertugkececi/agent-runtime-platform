@@ -18,7 +18,7 @@ Bir kullanıcı arayüzünden veya API'den ajan oluştur; modele, talimatlara, y
 - İnsan-ajan sohbetinde bir alt görevi, tam yetenek eşleşmesiyle bulunan tek etkin ajana devretme; bir istekte en fazla bir devir yapılır.
 - Çalıştırma durumlarını, kullanılan ajan yapılandırması anlık görüntülerini ve sıralı olay izlerini API üzerinden görüntüleme.
 
-Sınırlı grup odası API’si kullanılabilir. MCP araç bağlayıcıları ve çok kullanıcılı erişim henüz uygulanmadı; genişletmeler “Sonraki aşamalar” bölümündedir.
+Sınırlı grup odası API’si kullanılabilir. Salt okunur MCP araçları, yalnızca Codex sağlayıcısında ve sunucu yöneticisinin tanımladığı yerel stdio sunucularından etkinleştirilebilir. MCP sunucularını ve izinli araç adlarını HTTP API’sine göndermek mümkün değildir.
 
 ## Kavramsal mimari
 
@@ -72,7 +72,13 @@ Yönlendirme, izin ve limit kontrolleri öngörülebilir kurallarla çalışır.
 }
 ```
 
-Bu JSON, hedeflenen geniş ajan sözleşmesini gösterir. Uygulama API'si bugün ajan adı, açıklaması, talimatları, model sağlayıcısı ve adı, etkin durumu ve yeteneklerini yönetir; çalıştırmalar kullanılan sürümlü yapılandırmanın anlık görüntüsünü saklar. Araç kimlikleri, iletişim izinleri ve limit alanları henüz API'de uygulanmamıştır. Anahtarlar ve erişim belirteçleri ajan tanımına düz metin olarak yazılmamalıdır.
+Bu JSON hedeflenen ajan sözleşmesini gösterir. API'deki tool_ids, /mcp/tools yanıtında listelenen sunucu/araç kimliklerinden seçilir. MCP sunucu komutları, argümanları, ortam değişkeni adları ve yönetici tarafından salt okunur olduğu onaylanan araçlar yalnızca AGENT_RUNTIME_MCP_SERVERS sunucu ortam değişkeninden yüklenir. İstek gövdesiyle komut, URL, yol veya ortam değeri kaydedilemez. OpenAI sağlayıcısı tool_ids kabul etmez; istek açık bir 422 hatası alır.
+
+MCP katalog yapılandırma örneği:
+
+    {"docs":{"command":"uvx","args":["example-readonly-mcp"],"env_vars":["DOCS_TOKEN"],"read_only_tools":["search","fetch"]}
+
+Bu JSON'u AGENT_RUNTIME_MCP_SERVERS ortam değişkenine koy. Token değerleri ayrı süreç ortam değişkenlerinde tutulur ve API yanıtlarına ya da çalıştırma izlerine eklenmez. read_only_tools güven kararıdır: MCP readOnlyHint açıklama niteliğindedir ve tek başına yetki vermez. İlk sürüm Codex'e yalnızca ajanın açık izin listesindeki araçları verir; shell, birleşik çalıştırma, web araması ve diğer MCP sunucuları kapalı kalır. İzin kaldırma, kuyruğa alınmış iş Codex'i başlatmadan önce güncel ajan kaydıyla tekrar denetlenir. Araç çağrısı izi yalnızca sunucu, araç, durum ve aşama alanlarını tutar. Araç argümanları, sonuç içeriği ve gizli değerler kaydedilmez. Codex oturumu, kullanıcı genelindeki ~/.codex/config.toml dosyasını devralmaz: kimlik doğrulama dosyası yalnızca uygulamanın ~/.agent-runtime-platform/codex-home dizinine kopyalanır (dizin 0700, dosya 0600); uygulama tarafından yenilenen belirteçler bu kopyada kalır.
 
 Bir ajan devre dışı bırakıldığında eski konuşmaların ajan kimliği korunur. Her çalıştırma, kullanılan ajan tanımının sürümünü veya anlık görüntüsünü kaydeder; böylece geçmiş sonuçlar daha sonra açıklanabilir.
 
@@ -244,11 +250,11 @@ Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama 
 | İşlev | Mevcut durum |
 | --- | --- |
 | Ajan yönetimi | API üzerinden ajan oluşturma, düzenleme ve devre dışı bırakma kullanılabilir. |
-| Model seçimi | Varsayılan Codex (ChatGPT girişi) ve isteğe bağlı OpenAI API sağlayıcısı ile ajan başına model adı desteklenir; araç yapılandırması uygulanmadı. |
+| Model seçimi | Varsayılan Codex (ChatGPT girişi) ve isteğe bağlı OpenAI API sağlayıcısı ile ajan başına model adı desteklenir. OpenAI sağlayıcısı MCP araç izni almayı reddeder. |
 | Yeteneğe göre keşif | Etkin ajanlar tam yetenek eşleşmesiyle aranır; tekil olmayan veya boş eşleşme açık hata verir. |
 | Ajanlar arası mesajlaşma | İki ajan arasında kimlikle veya tekil yetenek eşleşmesiyle doğrudan mesajlaşma kullanılabilir. |
 | İnsan-ajan sohbeti | Yerel tek kullanıcılı arayüzden sohbet başlatılır; konuşma geçmişi kalıcıdır. |
-| Çalıştırma izi | Durum, ajan yapılandırması anlık görüntüsü ve sıralı olaylar API'den okunabilir. |
+| Çalıştırma izi | Durum, ajan yapılandırması anlık görüntüsü, MCP izin kontrolü ve sırayla eklenen araç çağrısı olayları API'den okunabilir. |
 | Kalıcı arka plan kuyruğu | Yeni async API uçları ve ayrı tek sunucu işçisi kullanılabilir; sınırlı yeniden deneme ve başlangıç toparlaması uygulanır. |
 | Grup odası | 2–5 kayıtlı ajan açık sırayla bir tur katkı verir; seçilen moderatör katkılardan tek bir son yanıt üretir. Kuyruk ve çalışma izi kalıcıdır. |
 | Görev devri | İnsan-ajan sohbetinde en fazla bir alt görev tek etkin ajana devredilir; üst/alt görev ilişkisi, ajan anlık görüntüsü, sonuç ve olay izi saklanır. |
@@ -257,7 +263,7 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 ## Sonraki aşamalar
 
-1. MCP araç bağlayıcıları ve uzak ajan sistemleriyle A2A uyumluluğu.
+1. Uzak ajan sistemleriyle A2A uyumluluğu (ayrı #25).
 2. Yük gerektirirse Redis Streams, NATS veya benzeri dağıtık kuyruk.
 3. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
 
@@ -267,4 +273,4 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olur. Yerel tek kullanıcılı sohbet arayüzü ve tek sunuculu kalıcı görev kuyruğu kullanılabilir; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir.
 
-Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve oda oluşturma/geçmiş/çalıştırma izleme arayüzüyle sınırlı grup odası sunar. Yol haritasındaki sıradaki adım MCP araç bağlayıcıları ve uzak ajan sistemleriyle A2A uyumluluğudur. Çok kullanıcılı erişim ve kimlik doğrulama daha sonraki kapsamdadır; dağıtık kuyruk ancak ölçülen yük bunu gerektirirse ele alınır.
+Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve oda oluşturma/geçmiş/çalıştırma izleme arayüzüyle sınırlı grup odası sunar. MCP salt okunur araç dilimi tamamlandı; yol haritasındaki sıradaki adım ayrı #25 A2A uyumluluğudur. Çok kullanıcılı erişim ve kimlik doğrulama daha sonraki kapsamdadır; dağıtık kuyruk ancak ölçülen yük bunu gerektirirse ele alınır.

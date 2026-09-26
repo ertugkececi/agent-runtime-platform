@@ -348,3 +348,59 @@ def test_graph_retry_resumes_persisted_child_when_parent_model_returns_plain_tex
         assert root_task.status == "completed"
     client.close()
     app.state.database.dispose()
+
+
+def test_queued_run_rechecks_tool_grants_before_codex_invocation(tmp_path, monkeypatch):
+    import json
+    import sys
+
+    fixture = Path(__file__).parent / "fixtures" / "readonly_mcp_server.py"
+    monkeypatch.setenv(
+        "AGENT_RUNTIME_MCP_SERVERS",
+        json.dumps({
+            "fixture": {
+                "command": sys.executable,
+                "args": [str(fixture)],
+                "read_only_tools": ["lookup"],
+            }
+        }),
+    )
+
+    class ToolAwareProvider:
+        def __init__(self):
+            self.tool_ids_at_call = None
+
+        def generate(self, agent, history, *, allow_handoff=False):
+            self.tool_ids_at_call = agent.get("tool_ids", [])
+            return "answer without revoked tool"
+
+    provider = ToolAwareProvider()
+    app = create_app(
+        f"sqlite:///{tmp_path / 'mcp-revocation.db'}",
+        ProviderRegistry({"codex": provider}),
+    )
+    client = TestClient(app)
+    agent = client.post("/agents", json={
+        "name": "Queued reader", "instructions": "Read safely.",
+        "model_name": "test", "tool_ids": ["fixture/lookup"],
+    }).json()
+    conversation = client.post("/chat/conversations", json={"agent_id": agent["id"]}).json()
+    queued = client.post(
+        f"/chat/conversations/{conversation['id']}/messages/async",
+        json={"content": "Read this."},
+    ).json()
+
+    assert claim_one(app.state.runtime) == queued["id"]
+    revoked = client.patch(f"/agents/{agent['id']}", json={"tool_ids": []})
+    assert revoked.status_code == 200
+    app.state.runtime.execute_queued_run(queued["id"])
+
+    result = app.state.runtime.get_run(queued["id"])
+    assert result["status"] == "completed"
+    assert result["agent_snapshots"]["target"]["tool_ids"] == ["fixture/lookup"]
+    checked = next(event for event in result["events"] if event["type"] == "mcp_tool_permissions_checked")
+    assert checked["payload"]["snapshot_tool_ids"] == ["fixture/lookup"]
+    assert checked["payload"]["effective_tool_ids"] == []
+    assert provider.tool_ids_at_call == []
+    client.close()
+    app.state.database.dispose()

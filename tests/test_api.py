@@ -118,10 +118,11 @@ def test_two_registered_agents_exchange_a_persisted_message_and_trace(client_and
     assert run["messages"][1]["kind"] == "agent_response"
     assert run["messages"][1]["content"] == "Reply from Architect"
     assert run["agent_snapshots"]["target"]["model_name"] == "model-b"
-    assert [event["sequence"] for event in run["events"]] == list(range(1, 8))
+    assert [event["sequence"] for event in run["events"]] == list(range(1, 9))
     assert [event["type"] for event in run["events"]] == [
         "run_started",
         "message_sent",
+        "mcp_tool_permissions_checked",
         "agent_invocation_started",
         "model_call_started",
         "model_call_completed",
@@ -324,6 +325,7 @@ def test_human_can_chat_with_an_agent_and_reload_the_persisted_trace(client_and_
     assert [event["type"] for event in run["events"]] == [
         "run_started",
         "user_message_received",
+        "mcp_tool_permissions_checked",
         "agent_invocation_started",
         "model_call_started",
         "model_call_completed",
@@ -684,6 +686,9 @@ def test_codex_provider_uses_existing_login_without_api_key_and_bounded_handoff(
     ]
 
     class StubCodex:
+        def __init__(self, config=None):
+            calls.append({"codex_config": config})
+
         def __enter__(self):
             return self
 
@@ -694,15 +699,46 @@ def test_codex_provider_uses_existing_login_without_api_key_and_bounded_handoff(
             return SimpleNamespace(account=SimpleNamespace(root=SimpleNamespace(type="chatgpt")))
 
         def thread_start(self, **options):
-            calls.append(options)
+            self.thread_options = options
+            calls[-1].update(options)
             return self
 
-        def run(self, prompt, **options):
+        def turn(self, prompt, **options):
             calls[-1]["prompt"] = prompt
             calls[-1]["turn_options"] = options
-            return SimpleNamespace(error=None, final_response=replies.pop(0))
+            response = replies.pop(0)
+            from openai_codex.generated.v2_all import (
+                AgentMessageThreadItem,
+                ItemCompletedNotification,
+                MessagePhase,
+                ThreadItem,
+                Turn,
+                TurnCompletedNotification,
+                TurnStatus,
+            )
+            from openai_codex.models import Notification
+
+            item = ThreadItem(root=AgentMessageThreadItem(
+                id="item-1", type="agentMessage", phase=MessagePhase.final_answer, text=response
+            ))
+            item_notification = Notification(
+                "item/completed",
+                ItemCompletedNotification(completedAtMs=1, item=item, threadId="thread-1", turnId="turn-1"),
+            )
+            turn_completed = Notification(
+                "turn/completed",
+                TurnCompletedNotification(
+                    threadId="thread-1",
+                    turn=Turn(id="turn-1", status=TurnStatus.completed, items=[item]),
+                ),
+            )
+            return SimpleNamespace(id="turn-1", stream=lambda: iter([item_notification, turn_completed]))
 
     monkeypatch.setattr(openai_codex, "Codex", StubCodex)
+    monkeypatch.setattr(
+        "agent_runtime_platform.codex_home.prepare_codex_home",
+        lambda: Path("/tmp/test-codex-home"),
+    )
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     registry = ProviderRegistry({"codex": CodexChatProvider()})
     agent = {
