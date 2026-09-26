@@ -627,9 +627,11 @@
           if (targetConversationId) {
             recovered = await loadConversation({ resume: false });
             if (generation !== viewGeneration || targetConversationId !== conversationId) return;
-            acceptedRun = (recovered?.messages || []).find((item) =>
-              item.sender_type === "user" && item.content === content &&
-              item.run_id && !beforeMessageIds.has(item.id));
+            if (asyncSubmissionStarted) {
+              acceptedRun = (recovered?.messages || []).find((item) =>
+                item.sender_type === "user" && item.content === content &&
+                item.run_id && !beforeMessageIds.has(item.id));
+            }
           }
           if (acceptedRun) {
             uncertainSubmission = false;

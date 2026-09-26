@@ -23,7 +23,7 @@ const poller = html.match(
 )?.[0];
 assert.ok(poller, "run poller is present");
 
-function makeSubmit({ post, recovery }) {
+function makeSubmit({ post, recovery, preflight }) {
   const state = {
     conversationId: "c1",
     generation: 1,
@@ -46,6 +46,7 @@ function makeSubmit({ post, recovery }) {
       state.postCalls += 1;
       return post();
     }
+    if (preflight) return preflight();
     return { messages: [{ id: "old", sender_type: "user", content: "old", run_id: "old-run" }] };
   };
   const loadConversation = async () => recovery();
@@ -108,6 +109,25 @@ test("successful recovery read avoids the old block-scope ReferenceError", async
   harness.sync();
   assert.equal(harness.state.uncertainSubmission, false);
   assert.equal(harness.state.sendDisabled, false, "a confirmed absent run can be retried");
+});
+
+
+
+test("preflight failure does not adopt a historical same-text run", async () => {
+  const harness = makeSubmit({
+    post: async () => ({ id: "unexpected", status: "queued" }),
+    preflight: async () => { throw new Error("preflight unavailable"); },
+    recovery: async () => ({
+      messages: [{ id: "old", sender_type: "user", content: "question", run_id: "old-run" }],
+    }),
+  });
+  await harness.submit({ preventDefault() {} });
+  harness.sync();
+  assert.equal(harness.state.postCalls, 0, "the async POST never started");
+  assert.equal(harness.messageInput.value, "question", "the unsent draft remains in the composer");
+  assert.equal(harness.state.activeRunId, "");
+  assert.equal(harness.state.monitored.length, 0, "historical run must not be monitored as this send");
+  assert.equal(harness.state.uncertainSubmission, false);
 });
 
 test("second submit is ignored while the first async POST is in flight", async () => {
