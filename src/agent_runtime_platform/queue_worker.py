@@ -14,7 +14,7 @@ from sqlalchemy import select, update
 from sqlalchemy.engine import make_url
 
 from agent_runtime_platform.api import create_app
-from agent_runtime_platform.models import HumanChatRun, QueueJob, Run, Task
+from agent_runtime_platform.models import HumanChatRun, QueueJob, RoomRun, RoomRunEvent, RoomRunTurn, Run, Task
 from agent_runtime_platform.runtime import _append_event, _append_human_chat_event
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -47,6 +47,14 @@ def acquire_worker_lock(runtime) -> int:
     return descriptor
 
 
+def _append_room_event(session, run: RoomRun, event_type: str, payload: dict) -> None:
+    run.next_event_sequence += 1
+    session.add(RoomRunEvent(
+        run_id=run.id, sequence=run.next_event_sequence,
+        event_type=event_type, payload=payload,
+    ))
+
+
 def recover_interrupted_jobs(runtime) -> None:
     """Return interrupted claims to the queue; attempts still bound total executions."""
     with runtime.database.session() as session:
@@ -54,6 +62,7 @@ def recover_interrupted_jobs(runtime) -> None:
         for job in jobs:
             run = session.get(Run, job.run_id)
             chat_run = session.get(HumanChatRun, job.run_id)
+            room_run = session.get(RoomRun, job.run_id)
             if job.attempts >= job.max_attempts:
                 job.status = "failed"
                 job.last_error = "worker_interrupted"
@@ -62,6 +71,17 @@ def recover_interrupted_jobs(runtime) -> None:
                     run.error_code = "worker_interrupted"
                     run.completed_at = datetime.now(timezone.utc)
                     _append_event(session, run, "run_failed", {"error_code": run.error_code})
+                elif room_run is not None:
+                    room_run.status = "failed"
+                    room_run.error_code = "worker_interrupted"
+                    room_run.completed_at = datetime.now(timezone.utc)
+                    for turn in session.scalars(select(RoomRunTurn).where(
+                        RoomRunTurn.run_id == room_run.id, RoomRunTurn.status.in_(["queued", "running"])
+                    )).all():
+                        turn.status = "failed"
+                        turn.completed_at = room_run.completed_at
+                    job.updated_at = room_run.completed_at
+                    _append_room_event(session, room_run, "run_failed", {"error_code": room_run.error_code})
                 elif chat_run is not None:
                     chat_run.status = "failed"
                     chat_run.error_code = "worker_interrupted"
@@ -82,6 +102,13 @@ def recover_interrupted_jobs(runtime) -> None:
                 if run is not None and run.status != "completed":
                     run.status = "queued"
                     _append_event(session, run, "worker_recovered", {"attempt": job.attempts})
+                elif room_run is not None and room_run.status != "completed":
+                    room_run.status = "queued"
+                    for turn in session.scalars(select(RoomRunTurn).where(
+                        RoomRunTurn.run_id == room_run.id, RoomRunTurn.status == "running"
+                    )).all():
+                        turn.status = "queued"
+                    _append_room_event(session, room_run, "worker_recovered", {"attempt": job.attempts})
                 elif chat_run is not None and chat_run.status != "completed":
                     chat_run.status = "queued"
                     tasks = session.scalars(
@@ -111,9 +138,14 @@ def claim_one(runtime) -> str | None:
         job = session.get(QueueJob, job_id)
         run = session.get(Run, job_id)
         chat_run = session.get(HumanChatRun, job_id)
+        room_run = session.get(RoomRun, job_id)
         if run is not None and run.status == "queued":
             run.status = "running"
             _append_event(session, run, "run_started" if job.attempts == 1 else "worker_attempt_started", {"attempt": job.attempts})
+        elif room_run is not None and room_run.status == "queued":
+            room_run.status = "running"
+            room_run.started_at = room_run.started_at or datetime.now(timezone.utc)
+            _append_room_event(session, room_run, "run_started" if job.attempts == 1 else "worker_attempt_started", {"attempt": job.attempts})
         elif chat_run is not None and chat_run.status == "queued":
             chat_run.status = "running"
             tasks = session.scalars(

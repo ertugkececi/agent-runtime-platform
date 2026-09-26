@@ -89,6 +89,32 @@ class AgentUpdate(BaseModel):
         return _normalize_capabilities(value)
 
 
+class RoomCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    participant_agent_ids: list[str] = Field(min_length=2, max_length=5)
+    moderator_agent_id: str = Field(min_length=1)
+
+    @field_validator("name")
+    @classmethod
+    def strip_room_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Room name cannot be blank")
+        return value
+
+
+class RoomRunCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=20_000)
+
+    @field_validator("content")
+    @classmethod
+    def strip_room_content(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Room task cannot be blank")
+        return value
+
+
 class ConversationCreate(BaseModel):
     agent_ids: list[str] = Field(min_length=2, max_length=20)
 

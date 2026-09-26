@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 
 from agent_runtime_platform.database import Database
 from agent_runtime_platform.providers import ProviderRegistry, list_codex_models
+from agent_runtime_platform.rooms import RoomRuntimeService
 from agent_runtime_platform.runtime import (
     AgentDisabledError,
     AgentAmbiguousError,
@@ -27,6 +28,8 @@ from agent_runtime_platform.schemas import (
     HumanChatCreate,
     HumanChatMessageCreate,
     MessageCreate,
+    RoomCreate,
+    RoomRunCreate,
 )
 
 
@@ -36,7 +39,10 @@ def create_app(
 ) -> FastAPI:
     load_dotenv(override=False)
     database = Database(database_url or os.getenv("AGENT_RUNTIME_DATABASE_URL", "sqlite:///./data/agent_runtime.db"))
-    runtime = AgentRuntimeService(database, providers or ProviderRegistry())
+    provider_registry = providers or ProviderRegistry()
+    runtime = AgentRuntimeService(database, provider_registry)
+    room_runtime = RoomRuntimeService(database, provider_registry)
+    runtime.room_runtime = room_runtime
     app = FastAPI(
         title="Agent Runtime Platform API",
         version="0.1.0",
@@ -100,6 +106,46 @@ def create_app(
         if conversation is None:
             raise HTTPException(status_code=404, detail="Conversation not found.")
         return conversation
+
+    @app.post("/rooms", status_code=status.HTTP_201_CREATED)
+    def create_room(request: RoomCreate) -> dict:
+        try:
+            return room_runtime.create_room(
+                request.name, request.participant_agent_ids, request.moderator_agent_id
+            )
+        except AgentNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="An agent was not found.") from exc
+        except AgentDisabledError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except InvalidMessageError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/rooms/{room_id}")
+    def get_room(room_id: str) -> dict:
+        room = room_runtime.get_room(room_id)
+        if room is None:
+            raise HTTPException(status_code=404, detail="Room not found.")
+        return room
+
+    @app.post("/rooms/{room_id}/runs", status_code=status.HTTP_202_ACCEPTED)
+    def enqueue_room_run(room_id: str, request: RoomRunCreate) -> dict:
+        try:
+            return room_runtime.enqueue_run(room_id, request.content)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="Room not found.") from exc
+        except AgentNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="A room participant was not found.") from exc
+        except AgentDisabledError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except InvalidMessageError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/rooms/{room_id}/runs")
+    def list_room_runs(room_id: str) -> list[dict]:
+        runs = room_runtime.list_room_runs(room_id)
+        if runs is None:
+            raise HTTPException(status_code=404, detail="Room not found.")
+        return runs
 
     @app.post("/chat/conversations", status_code=status.HTTP_201_CREATED)
     def create_human_chat(request: HumanChatCreate) -> dict:
@@ -214,6 +260,8 @@ def create_app(
     @app.get("/runs/{run_id}")
     def get_run(run_id: str) -> dict:
         run = runtime.get_run(run_id)
+        if run is None:
+            run = room_runtime.get_run(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Run not found.")
         return run

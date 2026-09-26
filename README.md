@@ -1,6 +1,6 @@
 # Agent Runtime Platform
 
-> **Durum:** Ajanlar arası mesajlaşma, yeteneğe göre keşif, yerel insan-ajan sohbeti, sınırlandırılmış tek alt görev devri ve kalıcı tek sunucu işçisi kullanılabilir. Varsayılan model sağlayıcısı ChatGPT oturumuyla çalışan Codex'tir.
+> **Durum:** Ajanlar arası mesajlaşma, yeteneğe göre keşif, yerel insan-ajan sohbeti, sınırlandırılmış grup odası/özet akışı, tek alt görev devri ve kalıcı tek sunucu işçisi kullanılabilir. Varsayılan model sağlayıcısı ChatGPT oturumuyla çalışan Codex'tir.
 
 Agent Runtime Platform, yapay zekâ ajanlarını çalışma anında tanımlayıp yönetmek, yeteneklerine göre bulmak ve birbirleriyle izlenebilir biçimde konuşturmak için tasarlanan bir platformdur. Yeni bir ajan eklemek veya devre dışı bırakmak, her seferinde uygulama kodunu değiştirmeyi gerektirmemelidir.
 
@@ -18,7 +18,7 @@ Bir kullanıcı arayüzünden veya API'den ajan oluştur; modele, talimatlara, y
 - İnsan-ajan sohbetinde bir alt görevi, tam yetenek eşleşmesiyle bulunan tek etkin ajana devretme; bir istekte en fazla bir devir yapılır.
 - Çalıştırma durumlarını, kullanılan ajan yapılandırması anlık görüntülerini ve sıralı olay izlerini API üzerinden görüntüleme.
 
-Grup odaları, araç/MCP bağlayıcıları ve çok kullanıcılı erişim henüz uygulanmadı. Planlanan işler “Sonraki aşamalar” bölümünde yer alır.
+Sınırlı grup odası API’si kullanılabilir. MCP araç bağlayıcıları ve çok kullanıcılı erişim henüz uygulanmadı; genişletmeler “Sonraki aşamalar” bölümündedir.
 
 ## Kavramsal mimari
 
@@ -88,11 +88,11 @@ Gönderen, sabit bir ajan adı yerine `postgresql` gibi bir yetenek isteyebilir.
 
 ### Devir ve koordinasyon
 
-İnsan-ajan sohbetinde üst ajan bir sınırlı alt görevi tam yetenek eşleşmesiyle bulunan tek etkin ajana devredebilir. Üst ajan kullanıcıya yanıt verir; üst/alt görev ilişkisi, kullanılan ajan yapılandırması anlık görüntüsü, durum, sonuç ve çalıştırma olayları kaydedilir. Her kullanıcı isteğinde en fazla bir devir yapılır; devredilen ajan yeni bir devir başlatamaz. Birden çok ajana koordinasyon bu dilimde yoktur.
+İnsan-ajan sohbetinde üst ajan bir sınırlı alt görevi tam yetenek eşleşmesiyle bulunan tek etkin ajana devredebilir. Üst ajan kullanıcıya yanıt verir; üst/alt görev ilişkisi, kullanılan ajan yapılandırması anlık görüntüsü, durum, sonuç ve çalıştırma olayları kaydedilir. Her kullanıcı isteğinde en fazla bir devir yapılır; devredilen ajan yeni bir devir başlatamaz. Birden çok ajana açık uçlu koordinasyon yerine sınırlı oda akışı kullanılır.
 
 ### Oda / grup konuşması
 
-Bir konuşmaya birden fazla ajan katılabilir. Örneğin mimar, geliştirici ve güvenlik ajanı aynı konuda görüş belirtebilir. Grup odaları henüz uygulanmadı; planlanan çözümde söz hakkı sırası ve bitiş koşulu çalışma zamanı tarafından belirlenecek, kontrolsüz ve sonsuz ajan konuşmaları engellenecek.
+Grup odasında 2–5 kayıtlı ajan aynı görev için belirlenen sırada birer katkı üretir; seçilen moderatör bu katkılardan tek bir son yanıt hazırlar. Her çalıştırma en fazla altı model çağrısı yapar; araç kullanımı ve alt göreve devir kapalıdır.
 
 Örnek mesaj zarfı:
 
@@ -217,6 +217,14 @@ sudo tailscale serve status
 
 `PATCH /agents/{agent_id}` ajan ayarlarını, yeteneklerini değiştirir veya `{"enabled": false}` ile yeni çalıştırmalarda kullanılmasını engeller. Her değişiklik ajan sürümünü artırır. Çalışan her görev, başlangıçta kullandığı talimat/model/yetenek anlık görüntüsünü saklar; çalıştırma API'si talimat içeriğini döndürmez.
 
+### Grup odası API'si
+
+- `POST /rooms` gövdesi `{"name":"Tasarım incelemesi","participant_agent_ids":["ajan-1","ajan-2"],"moderator_agent_id":"ajan-1"}` ile oda oluşturur. Katılımcı sırası listedeki sıradır; 2–5 etkin ve benzersiz ajan gerekir, moderatör katılımcılardan biri olmalıdır.
+- `GET /rooms/{room_id}` oda ayarını ve başlangıçtaki ajan yapılandırması anlık görüntülerini döndürür.
+- `POST /rooms/{room_id}/runs` gövdesi `{"content":"Görev açıklaması"}` ile kalıcı kuyruğa ekler ve hemen `202` ile `{"id":"...","status":"queued","status_url":"/runs/..."}` döndürür.
+- `GET /runs/{run_id}` eski bire bir çalıştırmaların mevcut yanıtını korur; oda çalıştırmalarında ek olarak `run_type: "room"`, sıralı `turns` (katılımcı ve moderatör özeti `phase` alanıyla ayrılır), `final_answer` ve olay izini döndürür. `GET /rooms/{room_id}/runs` oda çalıştırma geçmişini listeler.
+- İşçi her katılımcıyı birer kez sırayla çağırır, sonra moderatörden tek özet ister. Her tur önceki katkıları görür; devir ve araç kullanımı kapalıdır. Normal çalıştırmada üst sınır altı model çağrısıdır. Tamamlanan katkılar retry/yeniden başlatmada atlanır; devam eden model çağrısının bir kez çalışması garanti edilmez.
+
 ### İnsan-ajan sohbet API'si
 
 - `POST /chat/conversations` gövdesi `{"agent_id": "..."}` ile tek ajanlı bir sohbet başlatır.
@@ -242,17 +250,16 @@ Web arayüzü yerel ve tek kullanıcılı kullanım içindir; kimlik doğrulama 
 | İnsan-ajan sohbeti | Yerel tek kullanıcılı arayüzden sohbet başlatılır; konuşma geçmişi kalıcıdır. |
 | Çalıştırma izi | Durum, ajan yapılandırması anlık görüntüsü ve sıralı olaylar API'den okunabilir. |
 | Kalıcı arka plan kuyruğu | Yeni async API uçları ve ayrı tek sunucu işçisi kullanılabilir; sınırlı yeniden deneme ve başlangıç toparlaması uygulanır. |
-| Grup odası | Birden fazla ajanın aynı konuşmada koordineli çalışması planlanıyor. |
+| Grup odası | 2–5 kayıtlı ajan açık sırayla bir tur katkı verir; seçilen moderatör katkılardan tek bir son yanıt üretir. Kuyruk ve çalışma izi kalıcıdır. |
 | Görev devri | İnsan-ajan sohbetinde en fazla bir alt görev tek etkin ajana devredilir; üst/alt görev ilişkisi, ajan anlık görüntüsü, sonuç ve olay izi saklanır. |
 
 Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işçi sürecini kullanır. Dağıtık işçiler ve harici kuyruk altyapısı bu kapsamda yoktur.
 
 ## Sonraki aşamalar
 
-1. Grup odaları ve birden fazla ajanın koordinasyonu.
-2. MCP araç bağlayıcıları ve uzak ajan sistemleriyle A2A uyumluluğu.
-3. Yük gerektirirse Redis Streams, NATS veya benzeri dağıtık kuyruk.
-4. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
+1. MCP araç bağlayıcıları ve uzak ajan sistemleriyle A2A uyumluluğu.
+2. Yük gerektirirse Redis Streams, NATS veya benzeri dağıtık kuyruk.
+3. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
 
 ## Teknoloji yönü
 
@@ -260,4 +267,4 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olur. Yerel tek kullanıcılı sohbet arayüzü ve tek sunuculu kalıcı görev kuyruğu kullanılabilir; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir.
 
-Mevcut dilimler API, yerel sohbet arayüzü ve tek işçili kalıcı kuyruk sunar. Grup odaları, çok kullanıcılı erişim ve kimlik doğrulama, araç bağlayıcıları/MCP, A2A ve dağıtık kuyruk sonraki işlerin kapsamındadır.
+Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve sınırlı grup odası çalışma zamanı sunar. Grup odalarının yönetim arayüzü, çok kullanıcılı erişim ve kimlik doğrulama, araç bağlayıcıları/MCP, A2A ve dağıtık kuyruk sonraki işlerin kapsamındadır.

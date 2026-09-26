@@ -23,6 +23,7 @@ from agent_runtime_platform.models import (
     Task,
     RunEvent,
     QueueJob,
+    RoomRun,
     new_id,
     utc_now,
 )
@@ -1133,6 +1134,14 @@ class AgentRuntimeService:
 
     def execute_queued_run(self, run_id: str) -> None:
         with self.database.session() as session:
+            is_room_run = session.get(RoomRun, run_id) is not None
+        if is_room_run:
+            room_runtime = getattr(self, "room_runtime", None)
+            if room_runtime is None:
+                raise RuntimeError("Room runtime service is not configured.")
+            room_runtime.execute_queued_run(run_id)
+            return
+        with self.database.session() as session:
             job = session.get(QueueJob, run_id)
             if job is None or job.status != "running":
                 return
@@ -1208,7 +1217,8 @@ class AgentRuntimeService:
 
             chat_run = session.get(HumanChatRun, run_id)
             if chat_run is None:
-                return None
+                room_runtime = getattr(self, "room_runtime", None)
+                return room_runtime.get_run(run_id) if room_runtime is not None else None
             events = session.scalars(
                 select(HumanChatRunEvent)
                 .where(HumanChatRunEvent.run_id == run_id)
