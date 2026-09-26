@@ -10,7 +10,9 @@ from sqlalchemy import select
 from agent_runtime_platform.api import create_app
 from agent_runtime_platform.models import HumanChatMessage, HumanChatRun, QueueJob, Task
 from agent_runtime_platform.providers import HandoffRequest, ProviderRegistry
-from agent_runtime_platform.queue_worker import claim_one, recover_interrupted_jobs
+from agent_runtime_platform.queue_worker import (
+    WorkerAlreadyRunning, acquire_worker_lock, claim_one, recover_interrupted_jobs,
+)
 
 
 class QueueProvider:
@@ -50,20 +52,45 @@ def test_async_acceptance_survives_worker_restart_and_has_one_visible_reply(tmp_
     assert payload["status"] == "queued"
     assert payload["status_url"] == f"/runs/{payload['id']}"
     assert client.get(payload["status_url"]).json()["status"] == "queued"
+    with app.state.database.session() as session:
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == payload["id"], Task.parent_task_id.is_(None)
+        ))
+        assert root_task.status == "queued"
 
     # Simulate a worker dying after it claimed the durable job.
     assert claim_one(app.state.runtime) == payload["id"]
+    with app.state.database.session() as session:
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == payload["id"], Task.parent_task_id.is_(None)
+        ))
+        assert root_task.status == "running"
     app.state.database.dispose()
     restarted = create_app(url, ProviderRegistry({"openai": provider}))
     recover_interrupted_jobs(restarted.state.runtime)
     assert restarted.state.runtime.get_run(payload["id"])["status"] == "queued"
+    with restarted.state.database.session() as session:
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == payload["id"], Task.parent_task_id.is_(None)
+        ))
+        assert root_task.status == "queued"
     assert claim_one(restarted.state.runtime) == payload["id"]
+    with restarted.state.database.session() as session:
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == payload["id"], Task.parent_task_id.is_(None)
+        ))
+        assert root_task.status == "running"
     restarted.state.runtime.execute_queued_run(payload["id"])
     restarted.state.runtime.execute_queued_run(payload["id"])
 
     result = restarted.state.runtime.get_run(payload["id"])
     assert result["status"] == "completed"
     assert result["queue"] == {"status": "completed", "attempts": 2, "max_attempts": 3}
+    with restarted.state.database.session() as session:
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == payload["id"], Task.parent_task_id.is_(None)
+        ))
+        assert root_task.status == "completed"
     with restarted.state.database.session() as session:
         replies = session.scalars(select(HumanChatMessage).where(
             HumanChatMessage.run_id == payload["id"], HumanChatMessage.kind == "agent_response"
@@ -85,7 +112,17 @@ def test_failed_attempt_is_retried_with_same_run_and_one_response(tmp_path):
     assert claim_one(app.state.runtime) == run_id
     app.state.runtime.execute_queued_run(run_id)
     assert app.state.runtime.get_run(run_id)["status"] == "queued"
+    with app.state.database.session() as session:
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == run_id, Task.parent_task_id.is_(None)
+        ))
+        assert root_task.status == "queued"
     assert claim_one(app.state.runtime) == run_id
+    with app.state.database.session() as session:
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == run_id, Task.parent_task_id.is_(None)
+        ))
+        assert root_task.status == "running"
     app.state.runtime.execute_queued_run(run_id)
     result = app.state.runtime.get_run(run_id)
     assert result["status"] == "completed"
@@ -144,7 +181,12 @@ def test_retry_limit_marks_run_failed_without_a_partial_response(tmp_path):
         replies = session.scalars(select(HumanChatMessage).where(
             HumanChatMessage.run_id == run_id, HumanChatMessage.kind == "agent_response"
         )).all()
-        assert job.status == "failed"
+        run = session.get(HumanChatRun, run_id)
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == run_id, Task.parent_task_id.is_(None)
+        ))
+        assert job.status == run.status == "failed"
+        assert root_task.status == "failed"
         assert job.attempts == job.max_attempts == 3
         assert replies == []
     client.close()
@@ -187,9 +229,15 @@ def test_handoff_retry_reuses_the_completed_child_task(tmp_path):
     }
 
     first = app.state.runtime._execute_handoff(state)
-    second = app.state.runtime._execute_handoff(state)
-    assert first["history"][-1]["content"].find("queued answer") >= 0
-    assert second["history"][-1]["content"].find("queued answer") >= 0
+    changed_state = {
+        **state,
+        "handoff_request": HandoffRequest("frontend", "A different retry objective"),
+    }
+    second = app.state.runtime._execute_handoff(changed_state)
+    assert "queued answer" in first["history"][-1]["content"]
+    assert "queued answer" in second["history"][-1]["content"]
+    assert "Review the backend" in second["history"][-1]["content"]
+    assert "A different retry objective" not in second["history"][-1]["content"]
     assert provider.calls == 1
     with app.state.database.session() as session:
         children = session.scalars(select(Task).where(
@@ -197,5 +245,55 @@ def test_handoff_retry_reuses_the_completed_child_task(tmp_path):
         )).all()
         assert len(children) == 1
         assert children[0].agent_id == delegated["id"]
+    client.close()
+    app.state.database.dispose()
+
+
+def test_worker_process_lock_blocks_second_owner_and_releases_cleanly(tmp_path):
+    provider = QueueProvider()
+    _url, app, client, _conversation_id = setup_chat(tmp_path, provider)
+    first_lock = acquire_worker_lock(app.state.runtime)
+    try:
+        try:
+            acquire_worker_lock(app.state.runtime)
+        except WorkerAlreadyRunning:
+            pass
+        else:
+            raise AssertionError("A second worker acquired the same database lock")
+    finally:
+        import os
+        os.close(first_lock)
+    second_lock = acquire_worker_lock(app.state.runtime)
+    import os
+    os.close(second_lock)
+    client.close()
+    app.state.database.dispose()
+
+
+def test_startup_recovery_exhaustion_fails_run_job_and_root_task_together(tmp_path):
+    provider = QueueProvider()
+    _url, app, client, conversation_id = setup_chat(tmp_path, provider)
+    run_id = client.post(
+        f"/chat/conversations/{conversation_id}/messages/async", json={"content": "Interrupted"}
+    ).json()["id"]
+    with app.state.database.session() as session:
+        job = session.get(QueueJob, run_id)
+        run = session.get(HumanChatRun, run_id)
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == run_id, Task.parent_task_id.is_(None)
+        ))
+        job.status = run.status = root_task.status = "running"
+        job.attempts = job.max_attempts
+        session.commit()
+
+    recover_interrupted_jobs(app.state.runtime)
+    with app.state.database.session() as session:
+        job = session.get(QueueJob, run_id)
+        run = session.get(HumanChatRun, run_id)
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == run_id, Task.parent_task_id.is_(None)
+        ))
+        assert job.status == run.status == root_task.status == "failed"
+        assert job.last_error == run.error_code == root_task.error_code == "worker_interrupted"
     client.close()
     app.state.database.dispose()
