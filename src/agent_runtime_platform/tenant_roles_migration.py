@@ -65,7 +65,7 @@ def _assert_legacy_guards(connection, tenant_id: str, owner_id: str) -> None:
 def _create_memberships(connection, owner_id: str, tenant_id: str, issuer: str, subject: str) -> None:
     connection.exec_driver_sql("""
       CREATE TABLE tenant_memberships (
-        id VARCHAR(36) PRIMARY KEY,
+        id VARCHAR(36) NOT NULL PRIMARY KEY,
         tenant_id VARCHAR(80) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
         oidc_issuer VARCHAR(2048) NOT NULL,
         oidc_subject VARCHAR(1024) NOT NULL,
@@ -129,7 +129,10 @@ def _rebuild_root(connection, table: str) -> None:
     )
 
 
-def _install_membership_guards(connection) -> None:
+def _install_membership_guards(connection, legacy_owner_id: str, tenant_id: str) -> None:
+    # ORM INSERTs can transiently use the legacy physical default. This exception is
+    # limited to that exact owner+tenant and INSERT only; app code must rebind and
+    # verify an active membership before commit. Every ownership UPDATE is active-only.
     for table in ROOTS:
         for suffix, event in (
             ("insert", "INSERT"),
@@ -137,17 +140,22 @@ def _install_membership_guards(connection) -> None:
         ):
             name = f"trg_{table}_tenant_membership_{suffix}"
             connection.exec_driver_sql(f'DROP TRIGGER IF EXISTS "{name}"')
+            active_or_legacy = (
+                "m.active=1 OR (NEW.owner_id='" + legacy_owner_id.replace("'", "''") +
+                "' AND NEW.tenant_id='" + tenant_id.replace("'", "''") + "')"
+                if suffix == "insert" else "m.active=1"
+            )
             connection.exec_driver_sql(f"""
               CREATE TRIGGER "{name}" BEFORE {event} ON "{table}"
               WHEN NEW.tenant_id IS NULL OR NEW.owner_id IS NULL OR NOT EXISTS (
                 SELECT 1 FROM tenant_memberships m
-                WHERE m.id=NEW.owner_id AND m.tenant_id=NEW.tenant_id
+                WHERE m.id=NEW.owner_id AND m.tenant_id=NEW.tenant_id AND ({active_or_legacy})
               )
               BEGIN SELECT RAISE(ABORT,'tenant membership required'); END
             """)
 
 
-def _validate_role_schema(connection, issuer: str, subject: str, tenant_id: str) -> None:
+def _validate_role_schema(connection, issuer: str, subject: str, tenant_id: str, legacy_owner_id: str) -> None:
     inspector = inspect(connection)
     if not {"tenant_memberships", "tenant_migration_versions"} <= set(inspector.get_table_names()):
         raise MigrationError("Tenant role schema is incomplete.")
@@ -167,15 +175,44 @@ def _validate_role_schema(connection, issuer: str, subject: str, tenant_id: str)
     if not any(fk["constrained_columns"] == ["tenant_id"] and fk["referred_table"] == "tenants"
                for fk in inspector.get_foreign_keys("tenant_memberships")):
         raise MigrationError("Tenant membership tenant foreign key is missing.")
-    membership_indexes = {index.get("name") for index in inspector.get_indexes("tenant_memberships")}
-    if not {"ix_tenant_memberships_principal","ix_tenant_memberships_tenant_role"} <= membership_indexes:
-        raise MigrationError("Tenant membership indexes are missing.")
+    membership_columns = {column["name"]: column for column in inspector.get_columns("tenant_memberships")}
+    required_membership = {"tenant_id", "oidc_issuer", "oidc_subject", "role", "active", "created_at"}
+    if (not required_membership <= set(membership_columns)
+            or inspector.get_pk_constraint("tenant_memberships").get("constrained_columns") != ["id"]
+            or any(membership_columns[name]["nullable"] for name in required_membership)
+            or str(membership_columns["active"].get("default")).strip("()'") != "1"):
+        raise MigrationError("Tenant membership required columns/defaults drifted.")
+    membership_indexes = {index.get("name"): tuple(index.get("column_names") or ())
+                          for index in inspector.get_indexes("tenant_memberships")}
+    if membership_indexes.get("ix_tenant_memberships_principal") != ("oidc_issuer", "oidc_subject", "active") or membership_indexes.get(
+        "ix_tenant_memberships_tenant_role"
+    ) != ("tenant_id", "role", "active"):
+        raise MigrationError("Tenant membership index columns/order drifted.")
     agents_sql = connection.execute(text(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'"
     )).scalar_one_or_none() or ""
     if "check (published in (0,1))" not in " ".join(agents_sql.lower().split()):
         raise MigrationError("agents.published CHECK constraint is missing.")
     for table in ROOTS:
+        root_columns = {column["name"]: column for column in inspector.get_columns(table)}
+        if any(root_columns.get(name) is None or root_columns[name]["nullable"] for name in ("tenant_id", "owner_id")):
+            raise MigrationError(f"{table} tenant_id/owner_id must remain NOT NULL.")
+        expected_defaults = {"tenant_id": tenant_id, "owner_id": legacy_owner_id}
+        for name, expected_default in expected_defaults.items():
+            actual = str(root_columns[name].get("default") or "").strip("()'\\\"")
+            if actual != expected_default:
+                raise MigrationError(f"{table}.{name} physical compatibility default drifted.")
+        indexes = {index.get("name"): tuple(index.get("column_names") or ())
+                   for index in inspector.get_indexes(table)}
+        if indexes.get(f"ix_{table}_tenant_owner") != ("tenant_id", "owner_id"):
+            raise MigrationError(f"{table} tenant-owner index columns/order drifted.")
+        invalid_roots = connection.execute(text(
+            f"SELECT COUNT(*) FROM \"{table}\" r LEFT JOIN tenant_memberships m "
+            "ON m.id=r.owner_id AND m.tenant_id=r.tenant_id "
+            "WHERE r.owner_id IS NULL OR r.tenant_id IS NULL OR m.id IS NULL"
+        )).scalar_one()
+        if invalid_roots:
+            raise MigrationError(f"{table} contains roots without a valid tenant owner mapping.")
         if not any(fk["constrained_columns"] == ["owner_id","tenant_id"]
                    and fk["referred_table"] == "tenant_memberships"
                    and fk["referred_columns"] == ["id","tenant_id"]
@@ -190,16 +227,24 @@ def _validate_role_schema(connection, issuer: str, subject: str, tenant_id: str)
         for item in triggers:
             suffix = "insert" if item.name.endswith("_insert") else "update"
             event = "INSERT" if suffix == "insert" else "UPDATE OF tenant_id,owner_id"
+            active_or_legacy = (
+                "m.active=1 OR (NEW.owner_id='" + legacy_owner_id.replace("'", "''") +
+                "' AND NEW.tenant_id='" + tenant_id.replace("'", "''") + "')"
+                if suffix == "insert" else "m.active=1"
+            )
             expected_ddl = f"""CREATE TRIGGER "{item.name}" BEFORE {event} ON "{table}"
               WHEN NEW.tenant_id IS NULL OR NEW.owner_id IS NULL OR NOT EXISTS (
                 SELECT 1 FROM tenant_memberships m
-                WHERE m.id=NEW.owner_id AND m.tenant_id=NEW.tenant_id
+                WHERE m.id=NEW.owner_id AND m.tenant_id=NEW.tenant_id AND ({active_or_legacy})
               )
               BEGIN SELECT RAISE(ABORT,'tenant membership required'); END"""
             normalized_actual = " ".join((item.sql or "").lower().split())
             normalized_expected = " ".join(expected_ddl.lower().split())
             if normalized_actual != normalized_expected:
                 raise MigrationError(f"{item.name} does not match the canonical membership guard.")
+    violations = connection.exec_driver_sql("PRAGMA foreign_key_check").all()
+    if violations:
+        raise MigrationError(f"Tenant role schema has {len(violations)} foreign-key/data violations.")
     expected_digest = _digest(issuer, subject, tenant_id)
     actual_digest = connection.execute(text(
         "SELECT mapping_sha256 FROM tenant_migration_versions WHERE revision=:r"
@@ -217,7 +262,7 @@ def dry_run(engine: Engine, issuer: str, subject: str, tenant_id: str) -> dict:
             owner_id = _require_v1(connection, issuer, subject, tenant_id)
             if connection.execute(text("SELECT 1 FROM tenant_migration_versions WHERE revision=:r"),
                                   {"r": ROLE_REVISION}).first():
-                _validate_role_schema(connection, issuer, subject, tenant_id)
+                _validate_role_schema(connection, issuer, subject, tenant_id, owner_id)
                 return {"status":"already-applied","revision":ROLE_REVISION,"mutated":False}
             if "tenant_memberships" in inspect(connection).get_table_names():
                 raise MigrationError("Unversioned tenant_memberships table exists.")
@@ -259,13 +304,13 @@ def migrate(engine: Engine, issuer: str, subject: str, tenant_id: str, backup_pa
             )
             for table in ROOTS:
                 _rebuild_root(connection, table)
-            _install_membership_guards(connection)
+            _install_membership_guards(connection, owner_id, tenant_id)
             connection.execute(text(
                 "INSERT INTO tenant_migration_versions(revision,applied_at,mapping_sha256) "
                 "VALUES(:r,:now,:digest)"
             ), {"r":ROLE_REVISION,"now":datetime.now(timezone.utc).replace(tzinfo=None),
                 "digest":_digest(issuer,subject,tenant_id)})
-            _validate_role_schema(connection, issuer, subject, tenant_id)
+            _validate_role_schema(connection, issuer, subject, tenant_id, owner_id)
             violations = connection.exec_driver_sql("PRAGMA foreign_key_check").all()
             if violations:
                 raise MigrationError(f"Role migration produced {len(violations)} foreign-key violations.")
@@ -283,8 +328,8 @@ def validate_role_migration(engine: Engine, issuer: str, subject: str, tenant_id
     if engine.dialect.name != "sqlite":
         raise MigrationError("Tenant role authorization is validated for SQLite only.")
     with engine.connect() as connection:
-        _require_v1(connection, issuer, subject, tenant_id)
-        _validate_role_schema(connection, issuer, subject, tenant_id)
+        owner_id = _require_v1(connection, issuer, subject, tenant_id)
+        _validate_role_schema(connection, issuer, subject, tenant_id, owner_id)
 
 def main(argv: list[str] | None = None) -> int:
     import argparse

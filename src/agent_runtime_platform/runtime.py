@@ -741,12 +741,15 @@ class AgentRuntimeService:
                     for message in messages
                 ]
                 target_config = dict(chat_run.target_config_snapshot)
-                try:
-                    target_config["remote_a2a_capabilities"] = sorted({
-                        capability for target in configured_targets() for capability in target["capabilities"]
-                    })
-                except A2AError:
+                if self.resource_auth is not None and self.resource_auth.mode == "tenant_roles":
                     target_config["remote_a2a_capabilities"] = []
+                else:
+                    try:
+                        target_config["remote_a2a_capabilities"] = sorted({
+                            capability for target in configured_targets() for capability in target["capabilities"]
+                        })
+                    except A2AError:
+                        target_config["remote_a2a_capabilities"] = []
                 _append_human_chat_event(
                     session,
                     chat_run,
@@ -827,16 +830,21 @@ class AgentRuntimeService:
             run_parent = session.get(Run, run_id)
             chat_parent = session.get(HumanChatRun, run_id) if run_parent is None else None
             if run_parent is not None:
-                scope = self._scope_for_conversation(session, run_parent.conversation_id)
+                conversation_id = run_parent.conversation_id
+                scope = self._scope_for_conversation(session, conversation_id)
             elif chat_parent is not None:
-                scope = self._scope_for_conversation(session, chat_parent.conversation_id)
+                conversation_id = chat_parent.conversation_id
+                scope = self._scope_for_conversation(session, conversation_id)
             else:
+                conversation_id = None
                 scope = None
             if scope is not None:
                 statement = statement.where(scoped_root(Agent, scope))
             current_agent = session.scalar(statement)
             if scope is not None and current_agent is None:
                 raise RuntimeError("The persisted run agent is outside its parent conversation owner scope.")
+            if conversation_id is not None and scope is not None and self.resource_auth.mode == "tenant_roles":
+                self._assert_worker_agent_access(session, conversation_id, agent["id"])
             if current_agent is not None:
                 active_agent_version = current_agent.version
                 current_grants = set(current_agent.tool_ids or []) if current_agent.enabled else set()
@@ -946,6 +954,23 @@ class AgentRuntimeService:
             if chat_run is None or root_task is None:
                 return None
             child = session.scalar(select(Task).where(Task.root_run_id == run_id, Task.parent_task_id == root_task.id))
+            if self.resource_auth is not None and self.resource_auth.mode == "tenant_roles":
+                if child is None or child.config_snapshot.get("kind") != "a2a":
+                    # Let the normal tenant-scoped local handoff policy run; never consult global A2A.
+                    return None
+                child.status = "failed"
+                child.error_code = "tenant_remote_handoff_disabled"
+                child.remote_status = "tenant_remote_handoff_disabled"
+                child.completed_at = datetime.now(timezone.utc)
+                _append_human_chat_event(session, chat_run, "delegated_task_failed", {
+                    "task_id": child.id, "error_code": child.error_code,
+                    "remote_status": child.remote_status,
+                })
+                session.commit()
+                history.append({"role": "user", "content":
+                    "Internal delegation result: remote delegation is disabled in tenant role mode. "
+                    "Answer the original request without claiming delegation."})
+                return {"history": history, "allow_handoff": False}
             if child is not None and child.config_snapshot.get("kind") != "a2a":
                 return None
             if child is not None and child.status == "completed" and child.config_snapshot.get("kind") == "a2a":

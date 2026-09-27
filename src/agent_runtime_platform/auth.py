@@ -343,6 +343,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             response.headers.setdefault("X-Content-Type-Options", "nosniff")
             response.headers.setdefault("Referrer-Policy", "no-referrer")
             return response
+        if self.auth.config.resource_auth_mode == "tenant_roles":
+            reserved = {"tenant_id", "owner_id", "subject", "oidc_subject", "role", "published"}
+            if any(key.lower() in reserved for key, _ in request.query_params.multi_items()):
+                return JSONResponse({"detail": "Tenant and authorization claims are not accepted in query parameters."}, status_code=422, headers={"Cache-Control": "no-store"})
         if path in {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}:
             return JSONResponse({"detail": "Not found"}, status_code=404, headers={"Cache-Control": "no-store"})
         if path not in {"/", "/health", "/auth/login", "/auth/callback", "/auth/session"} and request.headers.get("authorization", "").lower().startswith("bearer "):

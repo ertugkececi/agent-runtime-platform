@@ -572,6 +572,30 @@ def test_tenant_roles_route_policy_and_transaction_owner_binding(tmp_path, monke
             assert connection.execute(text("SELECT count(*) FROM conversations")).scalar_one() == before_count
         visible = member.get("/agents").json()
         assert {agent["id"] for agent in visible} == {published, published_two}
+        for claim in ("tenant_id", "owner_id", "subject", "oidc_subject", "role", "published"):
+            assert member.get("/agents", params={claim: "forged"}).status_code == 422
+        assert member.post("/conversations", params={"owner_id": member_id},
+                           json={"agent_ids":[published]}, headers=headers).status_code == 422
+        assert member.post("/conversations", json={"agent_ids":[published], "tenant_id":"tenant-b"},
+                           headers=headers).status_code == 422
+        monkeypatch.setattr(app.state.resource_auth, "assign_created_root",
+                            lambda *args: (_ for _ in ()).throw(PermissionError("membership changed")))
+        assert member.post("/conversations", json={"agent_ids":[published,published_two]},
+                           headers=headers).status_code == 403
+        monkeypatch.setattr(app.state.resource_auth, "assign_created_root",
+                            lambda *args: (_ for _ in ()).throw(RuntimeError("membership schema unavailable")))
+        assert member.post("/conversations", json={"agent_ids":[published,published_two]},
+                           headers=headers).status_code == 503
+        monkeypatch.setattr(app.state.resource_auth, "assign_created_root", assign_root)
+        with app.state.database.engine.begin() as connection:
+            connection.execute(text("UPDATE tenant_memberships SET active=0 WHERE id=:id"), {"id":admin_id})
+        legacy_default_exception = app.state.runtime.create_conversation(
+            [published,published_two], OwnershipScope(member_id,"legacy","member"))
+        with app.state.database.engine.begin() as connection:
+            connection.execute(text("UPDATE tenant_memberships SET active=1 WHERE id=:id"), {"id":admin_id})
+        with app.state.database.engine.connect() as connection:
+            assert connection.execute(text("SELECT owner_id FROM conversations WHERE id=:id"),
+                                      {"id":legacy_default_exception["id"]}).scalar_one() == member_id
         assert member.patch(f"/agents/{published}", json={"description":"denied"}, headers=headers).status_code == 403
         assert member.patch(f"/agents/{hidden}", json={"description":"hidden"}, headers=headers).status_code == 404
         assert member.patch(f"/agents/{b_agent_one}", json={"description":"foreign"}, headers=headers).status_code == 404
@@ -631,15 +655,76 @@ def test_tenant_roles_route_policy_and_transaction_owner_binding(tmp_path, monke
         with app.state.database.session() as session:
             child = session.scalar(select(Task).where(Task.root_run_id==chat_run.json()["id"], Task.parent_task_id.is_not(None)))
             assert child is not None and child.agent_id == published_two
+        global_chat = member.post("/chat/conversations", json={"agent_id":published}, headers=headers)
+        assert global_chat.status_code == 201
+        global_run = member.post(f"/chat/conversations/{global_chat.json()['id']}/messages/async",
+                                 json={"content":"remote handoff"}, headers=headers)
+        assert global_run.status_code == 202
+        a2a_calls = {"targets": 0, "clients": 0}
+        def fake_targets():
+            a2a_calls["targets"] += 1
+            return [{"id":"global-target","capabilities":["remote-only"]}]
+        class FakeA2AClient:
+            def __init__(self, target):
+                a2a_calls["clients"] += 1
+            def send_or_poll(self, *args, **kwargs):
+                a2a_calls["clients"] += 100
+                return "unexpected"
+        monkeypatch.setattr(runtime_module, "configured_targets", fake_targets)
+        monkeypatch.setattr(runtime_module, "A2AClient", FakeA2AClient)
+        blocked = app.state.runtime._try_a2a_handoff(
+            {"run_id":global_run.json()["id"], "history":[]},
+            HandoffRequest("remote-only", "Do not contact global target"))
+        assert blocked is None
+        assert a2a_calls == {"targets": 0, "clients": 0}
+        with app.state.database.session() as session:
+            root = session.scalar(select(Task).where(Task.root_run_id==global_run.json()["id"], Task.parent_task_id.is_(None)))
+            session.add(Task(id="remote-retry-child", root_run_id=global_run.json()["id"],
+                parent_task_id=root.id, conversation_id=global_chat.json()["id"], agent_id=published,
+                capability="remote-only", objective="retry", config_snapshot={"kind":"a2a"},
+                remote_target_id="global-target", remote_message_id="remote-message", status="running"))
+            session.commit()
+        blocked_retry = app.state.runtime._try_a2a_handoff(
+            {"run_id":global_run.json()["id"], "history":[]},
+            HandoffRequest("remote-only", "Do not retry global target"))
+        assert blocked_retry is not None and blocked_retry["allow_handoff"] is False
+        assert a2a_calls == {"targets": 0, "clients": 0}
+        with app.state.database.session() as session:
+            retry_child = session.get(Task, "remote-retry-child")
+            assert retry_child.status == "failed"
+            assert retry_child.error_code == "tenant_remote_handoff_disabled"
         with app.state.database.engine.connect() as connection:
             owner = connection.execute(text("SELECT owner_id,tenant_id FROM conversations WHERE id=:id"), {"id":conversation_id}).one()
             room_owner = connection.execute(text("SELECT owner_id,tenant_id FROM rooms WHERE id=:id"), {"id":room_id}).one()
             membership = connection.execute(text("SELECT id FROM tenant_memberships WHERE oidc_subject='another-person' AND active=1")).scalar_one()
         assert owner == (membership, "legacy")
         assert room_owner == (membership, "legacy")
-        admin, _ = authenticated("legacy-operator", "admin")
+        admin, admin_headers = authenticated("legacy-operator", "admin")
         assert admin.get(f"/conversations/{conversation_id}").status_code == 404
         assert admin.get(f"/rooms/{room_id}").status_code == 404
+        admin_chat = admin.post("/chat/conversations", json={"agent_id":hidden}, headers=admin_headers)
+        assert admin_chat.status_code == 201
+        admin_run = admin.post(f"/chat/conversations/{admin_chat.json()['id']}/messages/async",
+                               json={"content":"admin private agent"}, headers=admin_headers)
+        assert admin_run.status_code == 202
+        provider_invocations = []
+        provider = app.state.runtime.providers._providers["openai"]
+        original_generate = provider.generate
+        monkeypatch.setattr(provider, "generate", lambda *args, **kwargs: provider_invocations.append(args))
+        with app.state.database.engine.begin() as connection:
+            connection.execute(text("UPDATE agents SET enabled=0 WHERE id=:id"), {"id":hidden})
+        with pytest.raises(RuntimeError, match="no longer enabled"):
+            app.state.runtime._call_provider(admin_run.json()["id"],
+                {"id":hidden,"tool_ids":[],"model_provider":"openai"}, [],
+                phase="disabled-admin-retry", allow_handoff=False)
+        with pytest.raises(RuntimeError, match="no longer enabled"):
+            app.state.runtime._finalize_handoff({"run_id":admin_run.json()["id"],
+                "target_config":{"id":hidden,"tool_ids":[],"model_provider":"openai"},
+                "history":[]})
+        assert provider_invocations == []
+        with app.state.database.engine.begin() as connection:
+            connection.execute(text("UPDATE agents SET enabled=1 WHERE id=:id"), {"id":hidden})
+        monkeypatch.setattr(provider, "generate", original_generate)
         assert hidden not in {agent["id"] for agent in member.get("/agents").json()}
         assert b_agent_one not in {agent["id"] for agent in member.get("/agents").json()}
         other_admin, other_headers = authenticated("tenant-b-admin", "admin", "tenant-b")
@@ -660,6 +745,31 @@ def test_tenant_roles_route_policy_and_transaction_owner_binding(tmp_path, monke
         assert member.get(f"/conversations/{b_conversation}").status_code == 404
         assert member.get(f"/rooms/{b_room}").status_code == 404
         assert member.get(f"/runs/{b_room_run}").status_code == 404
+        with app.state.database.engine.begin() as connection:
+            connection.execute(text("""
+                INSERT INTO tenant_memberships
+                  (id,tenant_id,oidc_issuer,oidc_subject,role,active,created_at)
+                VALUES ('duplicate-member-membership','tenant-b',:issuer,'another-person','member',1,CURRENT_TIMESTAMP)
+            """), {"issuer":issuer.url})
+        with pytest.raises(RuntimeError, match="exactly one active tenant membership"):
+            app.state.resource_auth.scope_for_owner(member_id, "legacy")
+        with app.state.database.session() as session:
+            with pytest.raises(RuntimeError, match="exactly one active tenant membership"):
+                app.state.runtime.room_runtime._assert_worker_agent_access(session, room_id, published)
+        provider_calls = []
+        provider = app.state.runtime.providers._providers["openai"]
+        monkeypatch.setattr(provider, "generate", lambda *args, **kwargs: provider_calls.append(args))
+        with pytest.raises(RuntimeError, match="exactly one active tenant membership"):
+            app.state.runtime._call_provider(sync_run.json()["id"],
+                {"id":published, "tool_ids":[], "model_provider":"openai"}, [],
+                phase="duplicate-owner-check", allow_handoff=False)
+        before_a2a = dict(a2a_calls)
+        with pytest.raises(RuntimeError, match="exactly one active tenant membership"):
+            app.state.runtime._try_a2a_handoff(
+                {"run_id":global_run.json()["id"], "history":[]},
+                HandoffRequest("remote-only", "Do not retry after duplicate membership"))
+        assert provider_calls == []
+        assert a2a_calls == before_a2a
         membership_lookup = app.state.auth._active_membership
         def membership_database_failure(*args):
             raise RuntimeError("database unavailable")

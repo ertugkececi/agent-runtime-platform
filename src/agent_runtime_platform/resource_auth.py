@@ -170,13 +170,15 @@ class ResourceAuthorization:
         if self.mode != "tenant_roles":
             return OwnershipScope(owner_id, tenant_id)
         with self.database.engine.connect() as connection:
-            row = connection.execute(text("""
-                SELECT role FROM tenant_memberships
-                WHERE id=:owner AND tenant_id=:tenant AND active=1
-            """), {"owner":owner_id,"tenant":tenant_id}).one_or_none()
-        if row is None or row.role not in {"admin", "member"}:
-            raise RuntimeError("Queued job owner membership is no longer active.")
-        return OwnershipScope(owner_id, tenant_id, row.role)
+            rows = connection.execute(text("""
+                SELECT id,tenant_id,role FROM tenant_memberships
+                WHERE oidc_issuer=(SELECT oidc_issuer FROM tenant_memberships WHERE id=:owner)
+                  AND oidc_subject=(SELECT oidc_subject FROM tenant_memberships WHERE id=:owner)
+                  AND active=1 ORDER BY tenant_id,id
+            """), {"owner":owner_id}).all()
+        if len(rows) != 1 or rows[0].id != owner_id or rows[0].tenant_id != tenant_id or rows[0].role not in {"admin", "member"}:
+            raise RuntimeError("Queued job owner must have exactly one active tenant membership.")
+        return OwnershipScope(owner_id, tenant_id, rows[0].role)
 
     def assign_created_root(self, session, model, root_id: str, scope: OwnershipScope | None) -> None:
         if self.mode != "tenant_roles" or scope is None:
