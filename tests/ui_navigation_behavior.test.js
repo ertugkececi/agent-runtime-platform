@@ -161,7 +161,34 @@ test("creating an agent only navigates to chat if the create form context is sti
     return isCurrentFormContext(formScreen, formGeneration);
   `)("new-agent");
   assert.equal(canNavigate, false);
-  assert.match(html, /const stillOnForm = isCurrentFormContext\(formScreen, formGeneration\)/);
+  assert.match(html, /let stillOnForm = isCurrentFormContext\(formScreen, formGeneration\)/);
   assert.match(html, /if \(stillOnForm\) \{\s*setAppScreen\("chat"/);
   assert.match(html, /if \(screen !== previousScreen\) screenGeneration \+= 1/);
+});
+
+
+test("create completion rechecks its form context after agent loading resolves", async () => {
+  const context = new Function("initialScreen", `
+    let currentScreen = initialScreen;
+    let screenGeneration = 4;
+    ${formContextSource}
+    const formScreen = currentScreen;
+    const formGeneration = screenGeneration;
+    return {
+      leave: () => { currentScreen = "agents"; screenGeneration += 1; },
+      finish: async (loadAgents) => {
+        let stillOnForm = isCurrentFormContext(formScreen, formGeneration);
+        await loadAgents();
+        stillOnForm = isCurrentFormContext(formScreen, formGeneration);
+        return stillOnForm;
+      },
+    };
+  `)("new-agent");
+  let resolveLoad;
+  const pending = context.finish(() => new Promise((resolve) => { resolveLoad = resolve; }));
+  while (!resolveLoad) await new Promise(setImmediate);
+  context.leave();
+  resolveLoad();
+  assert.equal(await pending, false, "leaving during loadAgents prevents chat navigation");
+  assert.match(html, /await loadAgents\(stillOnForm \? agent\.id : ""\);\s*stillOnForm = isCurrentFormContext\(formScreen, formGeneration\)/);
 });

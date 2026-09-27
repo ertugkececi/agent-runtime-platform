@@ -1204,12 +1204,13 @@
               capabilities,
             }),
           });
-          const stillOnForm = isCurrentFormContext(formScreen, formGeneration);
+          let stillOnForm = isCurrentFormContext(formScreen, formGeneration);
           if (stillOnForm) {
             conversationId = "";
             localStorage.removeItem("agentRuntimeConversationId");
           }
           await loadAgents(stillOnForm ? agent.id : "");
+          stillOnForm = isCurrentFormContext(formScreen, formGeneration);
           setAgentFormStatus("Ajan oluşturuldu. Mesajını yazabilirsin.", false, formScreen);
           if (stillOnForm) {
             setAppScreen("chat", { writeHistory: true });
