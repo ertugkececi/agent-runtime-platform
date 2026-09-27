@@ -1204,15 +1204,15 @@
               capabilities,
             }),
           });
-          let stillOnForm = isCurrentFormContext(formScreen, formGeneration);
+          await loadAgents();
+          const stillOnForm = isCurrentFormContext(formScreen, formGeneration);
+          setAgentFormStatus("Ajan oluşturuldu. Mesajını yazabilirsin.", false, formScreen);
           if (stillOnForm) {
             conversationId = "";
             localStorage.removeItem("agentRuntimeConversationId");
-          }
-          await loadAgents(stillOnForm ? agent.id : "");
-          stillOnForm = isCurrentFormContext(formScreen, formGeneration);
-          setAgentFormStatus("Ajan oluşturuldu. Mesajını yazabilirsin.", false, formScreen);
-          if (stillOnForm) {
+            agentSelect.value = agent.id;
+            localStorage.setItem("agentRuntimeAgentId", agent.id);
+            renderEditAgent();
             setAppScreen("chat", { writeHistory: true });
             document.getElementById("agent-capabilities").value = "";
             messageInput.focus();

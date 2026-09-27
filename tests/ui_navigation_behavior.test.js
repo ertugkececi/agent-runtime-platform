@@ -161,34 +161,44 @@ test("creating an agent only navigates to chat if the create form context is sti
     return isCurrentFormContext(formScreen, formGeneration);
   `)("new-agent");
   assert.equal(canNavigate, false);
-  assert.match(html, /let stillOnForm = isCurrentFormContext\(formScreen, formGeneration\)/);
-  assert.match(html, /if \(stillOnForm\) \{\s*setAppScreen\("chat"/);
+  assert.match(html, /const stillOnForm = isCurrentFormContext\(formScreen, formGeneration\)/);
+  assert.match(html, /if \(stillOnForm\) \{[\s\S]*?setAppScreen\("chat"/);
   assert.match(html, /if \(screen !== previousScreen\) screenGeneration \+= 1/);
 });
 
 
-test("create completion rechecks its form context after agent loading resolves", async () => {
+test("create completion preserves the existing chat if the user switches during agent loading", async () => {
   const context = new Function("initialScreen", `
     let currentScreen = initialScreen;
     let screenGeneration = 4;
+    let conversationId = "conversation-existing";
+    const storage = { conversationId: "conversation-existing" };
     ${formContextSource}
     const formScreen = currentScreen;
     const formGeneration = screenGeneration;
     return {
-      leave: () => { currentScreen = "agents"; screenGeneration += 1; },
+      leaveToChat: () => { currentScreen = "chat"; screenGeneration += 1; },
       finish: async (loadAgents) => {
-        let stillOnForm = isCurrentFormContext(formScreen, formGeneration);
         await loadAgents();
-        stillOnForm = isCurrentFormContext(formScreen, formGeneration);
-        return stillOnForm;
+        const stillOnForm = isCurrentFormContext(formScreen, formGeneration);
+        if (stillOnForm) {
+          conversationId = "";
+          delete storage.conversationId;
+        }
+        return { stillOnForm, conversationId, storedConversationId: storage.conversationId };
       },
     };
   `)("new-agent");
   let resolveLoad;
   const pending = context.finish(() => new Promise((resolve) => { resolveLoad = resolve; }));
   while (!resolveLoad) await new Promise(setImmediate);
-  context.leave();
+  context.leaveToChat();
   resolveLoad();
-  assert.equal(await pending, false, "leaving during loadAgents prevents chat navigation");
-  assert.match(html, /await loadAgents\(stillOnForm \? agent\.id : ""\);\s*stillOnForm = isCurrentFormContext\(formScreen, formGeneration\)/);
+  assert.deepEqual(await pending, {
+    stillOnForm: false,
+    conversationId: "conversation-existing",
+    storedConversationId: "conversation-existing",
+  }, "leaving during loadAgents preserves in-memory and persisted chat selection");
+  assert.match(html, /await loadAgents\(\);\s*const stillOnForm = isCurrentFormContext\(formScreen, formGeneration\)/);
+  assert.match(html, /const stillOnForm = isCurrentFormContext\(formScreen, formGeneration\);\s*setAgentFormStatus[\s\S]*?if \(stillOnForm\) \{\s*conversationId = "";\s*localStorage\.removeItem\("agentRuntimeConversationId"\)/);
 });
