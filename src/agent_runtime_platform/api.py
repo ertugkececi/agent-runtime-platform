@@ -86,8 +86,9 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/a2a/targets")
-    def list_a2a_targets() -> list[dict]:
+    def list_a2a_targets(request: Request) -> list[dict]:
         """Return safe discovery metadata; configured URLs and credentials stay private."""
+        ownership_scope(request)
         try:
             return [{"id": target["id"], "kind": "a2a", "capabilities": target["capabilities"]}
                     for target in configured_targets()]
@@ -95,14 +96,16 @@ def create_app(
             raise HTTPException(status_code=503, detail="A2A target configuration is invalid.") from exc
 
     @app.get("/mcp/tools")
-    def list_mcp_tools() -> list[dict]:
+    def list_mcp_tools(request: Request) -> list[dict]:
+        ownership_scope(request)
         try:
             return public_tool_catalog()
         except MCPConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/codex/models")
-    def codex_models() -> list[dict]:
+    def codex_models(request: Request) -> list[dict]:
+        ownership_scope(request)
         try:
             return list_codex_models()
         except Exception as exc:

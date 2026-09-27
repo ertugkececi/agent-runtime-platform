@@ -324,6 +324,8 @@ def test_migrated_two_owner_route_matrix_and_no_side_effects(tmp_path, monkeypat
             stored.scopes = []
             db.commit()
         assert client.get("/agents").status_code == 403
+        for catalog_route in ("/a2a/targets", "/mcp/tools", "/codex/models"):
+            assert client.get(catalog_route).status_code == 403, catalog_route
         with app.state.database.engine.begin() as connection:
             connection.execute(text("UPDATE tenant_migration_versions SET mapping_sha256='wrong' WHERE revision='tenant_ownership_v1'"))
         # An authenticated but unauthorized principal is 403 before any owner mapping lookup.
@@ -333,11 +335,13 @@ def test_migrated_two_owner_route_matrix_and_no_side_effects(tmp_path, monkeypat
             stored.scopes = ["legacy:operator"]
             db.commit()
         assert client.get("/agents").status_code == 503
+        for catalog_route in ("/a2a/targets", "/mcp/tools", "/codex/models"):
+            assert client.get(catalog_route).status_code == 503, catalog_route
     finally:
         client.close()
         app.state.database.dispose()
 
-@pytest.mark.parametrize("damage", ["guard", "root_owner"])
+@pytest.mark.parametrize("damage", ["guard", "guard_body", "root_owner"])
 def test_inconsistent_migrated_schema_fails_closed(tmp_path, monkeypatch, damage):
     path = tmp_path / f"bad-{damage}.db"
     database_url = f"sqlite:///{path}"
@@ -348,9 +352,15 @@ def test_inconsistent_migrated_schema_fails_closed(tmp_path, monkeypatch, damage
         agent_id = _create_agent(client, "migration root")
     migrate(app.state.database.engine, ISSUER, SUBJECT, TENANT, tmp_path / f"{damage}-backup.db")
     app.state.database.dispose()
-    if damage == "guard":
+    if damage in {"guard", "guard_body"}:
         with app.state.database.engine.begin() as connection:
             connection.execute(text('DROP TRIGGER "trg_agents_legacy_owner_update"'))
+            if damage == "guard_body":
+                # Astra regression probe: expected trigger name/event remains but the guard
+                # body has been neutralized. Startup must reject this schema.
+                connection.execute(text("""CREATE TRIGGER "trg_agents_legacy_owner_update"
+                    BEFORE UPDATE OF tenant_id, owner_id ON "agents"
+                    BEGIN SELECT 1; END"""))
     else:
         _, owner_id = _ids(ISSUER, SUBJECT, TENANT)
         other_owner = str(uuid4())

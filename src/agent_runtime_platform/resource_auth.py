@@ -88,10 +88,24 @@ class ResourceAuthorization:
         )).all()
         if {item.name for item in triggers} != expected:
             raise RuntimeError("Ownership root write guards are missing or unexpected.")
+        def normalized_trigger_sql(ddl: str) -> str:
+            # SQLite preserves the CREATE TRIGGER source in sqlite_master. Normalize only
+            # whitespace and identifier quoting; every event, column, predicate, and action
+            # must still match the migration's canonical guard exactly.
+            return " ".join(ddl.lower().replace('"', "").split()).rstrip(";")
+
         for item in triggers:
-            ddl = (item.sql or "").lower()
-            if f"new.tenant_id <> '{tenant_id.lower()}'" not in ddl or f"new.owner_id <> '{owner_id.lower()}'" not in ddl:
-                raise RuntimeError("Ownership root write guard does not enforce the configured legacy mapping.")
+            table, action = item.name.removeprefix("trg_").removesuffix("_legacy_owner_insert"), "insert"
+            if item.name.endswith("_legacy_owner_update"):
+                table, action = item.name.removeprefix("trg_").removesuffix("_legacy_owner_update"), "update"
+            event = "insert" if action == "insert" else "update of tenant_id, owner_id"
+            expected_sql = normalized_trigger_sql(
+                f"CREATE TRIGGER trg_{table}_legacy_owner_{action} BEFORE {event} ON {table} "
+                f"WHEN NEW.tenant_id <> '{tenant_id}' OR NEW.owner_id <> '{owner_id}' "
+                "BEGIN SELECT RAISE(ABORT, 'tenant owner context missing or inconsistent'); END"
+            )
+            if normalized_trigger_sql(item.sql or "") != expected_sql:
+                raise RuntimeError("Ownership root write guard differs from the canonical migration trigger.")
 
     def scope_for(self, principal: Principal | None) -> OwnershipScope | None:
         if self.mode == "off":
