@@ -40,3 +40,9 @@ test("disabled creation stays on the creation screen and provider switching upda
   assert.match(html, /Ajan oluşturuldu fakat devre dışı/);
   assert.match(html, /updateEditEffortOptions\(\{ \.\.\.agent, model_provider: editProviderSelect\.value \}, effort\)/);
 });
+
+test("a temporarily unavailable tool catalog cannot clear existing grants on unrelated saves", () => {
+  assert.match(html, /toolSelectionBaseline\.set\(containerId, selectedIds\.filter\(\(id\) => currentSet\.has\(id\)\)\.sort\(\)\)/);
+  assert.match(html, /function toolSelectionChanged\(containerId\)/);
+  assert.match(html, /if \(toolSelectionChanged\("edit-agent-tools"\)\) changes\.tool_ids = toolIds/);
+});
