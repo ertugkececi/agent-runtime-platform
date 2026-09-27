@@ -341,7 +341,7 @@ def test_migrated_two_owner_route_matrix_and_no_side_effects(tmp_path, monkeypat
         client.close()
         app.state.database.dispose()
 
-@pytest.mark.parametrize("damage", ["guard", "guard_body", "root_owner"])
+@pytest.mark.parametrize("damage", ["guard", "guard_body", "guard_event", "guard_columns", "guard_table", "guard_when", "guard_literal_case", "guard_literal_quote", "root_owner"])
 def test_inconsistent_migrated_schema_fails_closed(tmp_path, monkeypatch, damage):
     path = tmp_path / f"bad-{damage}.db"
     database_url = f"sqlite:///{path}"
@@ -352,7 +352,8 @@ def test_inconsistent_migrated_schema_fails_closed(tmp_path, monkeypatch, damage
         agent_id = _create_agent(client, "migration root")
     migrate(app.state.database.engine, ISSUER, SUBJECT, TENANT, tmp_path / f"{damage}-backup.db")
     app.state.database.dispose()
-    if damage in {"guard", "guard_body"}:
+    _, owner_id = _ids(ISSUER, SUBJECT, TENANT)
+    if damage in {"guard", "guard_body", "guard_event", "guard_columns", "guard_table", "guard_when", "guard_literal_case", "guard_literal_quote"}:
         with app.state.database.engine.begin() as connection:
             connection.execute(text('DROP TRIGGER "trg_agents_legacy_owner_update"'))
             if damage == "guard_body":
@@ -361,8 +362,20 @@ def test_inconsistent_migrated_schema_fails_closed(tmp_path, monkeypatch, damage
                 connection.execute(text("""CREATE TRIGGER "trg_agents_legacy_owner_update"
                     BEFORE UPDATE OF tenant_id, owner_id ON "agents"
                     BEGIN SELECT 1; END"""))
+            elif damage != "guard":
+                changed_tenant = ("LEGACY" if damage == "guard_literal_case" else
+                                  'le"gacy' if damage == "guard_literal_quote" else TENANT)
+                event = ("UPDATE" if damage == "guard_event" else
+                         "UPDATE OF tenant_id" if damage == "guard_columns" else
+                         "UPDATE OF tenant_id, owner_id")
+                table = "conversations" if damage == "guard_table" else "agents"
+                when = (f"WHEN NEW.tenant_id <> '{changed_tenant}'" if damage == "guard_when" else
+                        f"WHEN NEW.tenant_id <> '{changed_tenant}' OR NEW.owner_id <> '{owner_id}'")
+                connection.execute(text(f"""CREATE TRIGGER "trg_agents_legacy_owner_update"
+                    BEFORE {event} ON "{table}"
+                    {when}
+                    BEGIN SELECT RAISE(ABORT, 'tenant owner context missing or inconsistent'); END"""))
     else:
-        _, owner_id = _ids(ISSUER, SUBJECT, TENANT)
         other_owner = str(uuid4())
         with app.state.database.engine.begin() as connection:
             connection.execute(text("INSERT INTO tenants(id,created_at) VALUES ('tenant-b',CURRENT_TIMESTAMP)"))

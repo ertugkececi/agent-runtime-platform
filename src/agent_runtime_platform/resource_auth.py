@@ -89,22 +89,52 @@ class ResourceAuthorization:
         if {item.name for item in triggers} != expected:
             raise RuntimeError("Ownership root write guards are missing or unexpected.")
         def normalized_trigger_sql(ddl: str) -> str:
-            # SQLite preserves the CREATE TRIGGER source in sqlite_master. Normalize only
-            # whitespace and identifier quoting; every event, column, predicate, and action
-            # must still match the migration's canonical guard exactly.
-            return " ".join(ddl.lower().replace('"', "").split()).rstrip(";")
+            # Normalize lexical whitespace/case only outside quoted tokens. Literal bytes
+            # and quoted identifiers remain exact because SQLite compares string literals
+            # case-sensitively and their contents are part of the guard semantics.
+            out: list[str] = []
+            quote: str | None = None
+            pending_space = False
+            index = 0
+            while index < len(ddl):
+                char = ddl[index]
+                if quote:
+                    out.append(char)
+                    if char == quote:
+                        if index + 1 < len(ddl) and ddl[index + 1] == quote:
+                            out.append(ddl[index + 1])
+                            index += 1
+                        else:
+                            quote = None
+                    index += 1
+                    continue
+                if char in ("'", '\"', '`'):
+                    if pending_space and out:
+                        out.append(" ")
+                    pending_space = False
+                    quote = char
+                    out.append(char)
+                elif char.isspace():
+                    pending_space = True
+                else:
+                    if pending_space and out:
+                        out.append(" ")
+                    pending_space = False
+                    out.append(char.lower())
+                index += 1
+            return "".join(out).rstrip(" ;")
 
         for item in triggers:
             table, action = item.name.removeprefix("trg_").removesuffix("_legacy_owner_insert"), "insert"
             if item.name.endswith("_legacy_owner_update"):
                 table, action = item.name.removeprefix("trg_").removesuffix("_legacy_owner_update"), "update"
-            event = "insert" if action == "insert" else "update of tenant_id, owner_id"
-            expected_sql = normalized_trigger_sql(
-                f"CREATE TRIGGER trg_{table}_legacy_owner_{action} BEFORE {event} ON {table} "
+            event = "INSERT" if action == "insert" else "UPDATE OF tenant_id, owner_id"
+            expected_ddl = (
+                f'CREATE TRIGGER "trg_{table}_legacy_owner_{action}" BEFORE {event} ON "{table}" '
                 f"WHEN NEW.tenant_id <> '{tenant_id}' OR NEW.owner_id <> '{owner_id}' "
                 "BEGIN SELECT RAISE(ABORT, 'tenant owner context missing or inconsistent'); END"
             )
-            if normalized_trigger_sql(item.sql or "") != expected_sql:
+            if normalized_trigger_sql(item.sql or "") != normalized_trigger_sql(expected_ddl):
                 raise RuntimeError("Ownership root write guard differs from the canonical migration trigger.")
 
     def scope_for(self, principal: Principal | None) -> OwnershipScope | None:
