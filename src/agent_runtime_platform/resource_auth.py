@@ -16,6 +16,7 @@ from agent_runtime_platform.models import HumanChatRun, RoomRun, Run
 class OwnershipScope:
     owner_id: str
     tenant_id: str
+    role: str = "legacy_owner"
 
 
 class ResourceAuthorization:
@@ -25,8 +26,18 @@ class ResourceAuthorization:
         self.database = database
         self.auth_config = auth_config
         self.mode = os.getenv("AGENT_RUNTIME_RESOURCE_AUTH_MODE", "off").strip().lower()
-        if self.mode not in {"off", "legacy_owner"}:
-            raise RuntimeError("AGENT_RUNTIME_RESOURCE_AUTH_MODE must be 'off' or 'legacy_owner'.")
+        if self.mode not in {"off", "legacy_owner", "tenant_roles"}:
+            raise RuntimeError("AGENT_RUNTIME_RESOURCE_AUTH_MODE must be 'off', 'legacy_owner', or 'tenant_roles'.")
+        if self.mode == "tenant_roles":
+            if auth_config is None or auth_config.resource_auth_mode != "tenant_roles":
+                raise RuntimeError("tenant_roles requires OIDC auth mode and matching resource mode.")
+            if database.engine.dialect.name != "sqlite":
+                raise RuntimeError("tenant_roles is validated for SQLite only; PostgreSQL is fail-closed.")
+            try:
+                from agent_runtime_platform.tenant_roles_migration import validate_role_migration
+                validate_role_migration(database.engine, auth_config.issuer, auth_config.legacy_subject, auth_config.tenant_id)
+            except Exception as exc:
+                raise RuntimeError("Tenant role migration invariants are incomplete or inconsistent.") from exc
         if self.mode == "legacy_owner":
             if auth_config is None:
                 raise RuntimeError("legacy_owner resource authorization requires OIDC auth mode.")
@@ -35,8 +46,12 @@ class ResourceAuthorization:
             owner_id = self._resolve_mapping(auth_config.issuer, auth_config.legacy_subject, auth_config.tenant_id)
             try:
                 with database.engine.connect() as connection:
-                    _validate_owned_roots(connection, auth_config.tenant_id, owner_id)
-                    self._validate_schema(connection, auth_config.tenant_id, owner_id)
+                    role_revision = connection.execute(text(
+                        "SELECT mapping_sha256 FROM tenant_migration_versions WHERE revision='tenant_roles_v1'"
+                    )).scalar_one_or_none()
+                    if role_revision is None:
+                        _validate_owned_roots(connection, auth_config.tenant_id, owner_id)
+                        self._validate_schema(connection, auth_config.tenant_id, owner_id)
             except Exception as exc:
                 raise RuntimeError("Ownership migration invariants are incomplete or inconsistent.") from exc
 
@@ -56,6 +71,20 @@ class ResourceAuthorization:
                         raise RuntimeError("Ownership migration is incomplete.")
                 if digest != expected or row is None:
                     raise RuntimeError("Ownership migration or OIDC owner mapping is missing or mismatched.")
+                role_digest = connection.execute(text(
+                    "SELECT mapping_sha256 FROM tenant_migration_versions WHERE revision='tenant_roles_v1'"
+                )).scalar_one_or_none()
+                if role_digest is not None:
+                    from agent_runtime_platform.tenant_roles_migration import validate_role_migration
+                    validate_role_migration(self.database.engine, issuer, subject, tenant_id)
+                    membership = connection.execute(text("""
+                        SELECT id FROM tenant_memberships
+                        WHERE oidc_issuer=:issuer AND oidc_subject=:subject AND tenant_id=:tenant
+                          AND role='admin' AND active=1
+                    """), {"issuer":issuer,"subject":subject,"tenant":tenant_id}).scalar_one_or_none()
+                    if membership is None:
+                        raise RuntimeError("Configured legacy owner is not an active tenant admin.")
+                    return membership
                 self._validate_schema(connection, tenant_id, row)
                 return row
         except RuntimeError:
@@ -137,11 +166,68 @@ class ResourceAuthorization:
             if normalized_trigger_sql(item.sql or "") != normalized_trigger_sql(expected_ddl):
                 raise RuntimeError("Ownership root write guard differs from the canonical migration trigger.")
 
+    def scope_for_owner(self, owner_id: str, tenant_id: str) -> OwnershipScope:
+        if self.mode != "tenant_roles":
+            return OwnershipScope(owner_id, tenant_id)
+        with self.database.engine.connect() as connection:
+            row = connection.execute(text("""
+                SELECT role FROM tenant_memberships
+                WHERE id=:owner AND tenant_id=:tenant AND active=1
+            """), {"owner":owner_id,"tenant":tenant_id}).one_or_none()
+        if row is None or row.role not in {"admin", "member"}:
+            raise RuntimeError("Queued job owner membership is no longer active.")
+        return OwnershipScope(owner_id, tenant_id, row.role)
+
+    def assign_created_root(self, session, model, root_id: str, scope: OwnershipScope | None) -> None:
+        if self.mode != "tenant_roles" or scope is None:
+            return
+        table = model.__tablename__
+        if table not in {"agents", "conversations", "rooms"}:
+            raise RuntimeError("Only root resources can receive tenant ownership.")
+        # The UPDATE acquires SQLite's write reservation before re-checking active membership.
+        # Any failure below aborts the enclosing transaction, so the temporary DB default is never visible.
+        result = session.execute(text(
+            f'UPDATE "{table}" SET tenant_id=:tenant,owner_id=:owner WHERE id=:id'
+        ), {"tenant":scope.tenant_id,"owner":scope.owner_id,"id":root_id})
+        if result.rowcount != 1:
+            raise RuntimeError("Root ownership assignment did not affect exactly one row.")
+        membership = session.execute(text("""
+            SELECT role FROM tenant_memberships
+            WHERE id=:owner AND tenant_id=:tenant AND active=1
+        """), {"owner":scope.owner_id,"tenant":scope.tenant_id}).one_or_none()
+        if membership is None or membership._mapping["role"] != scope.role:
+            raise PermissionError("Tenant membership changed during root creation.")
+        if table == "agents" and scope.role != "admin":
+            raise PermissionError("Only tenant admins can create agents.")
+        row = session.execute(text(
+            f'SELECT tenant_id,owner_id FROM "{table}" WHERE id=:id'
+        ), {"id":root_id}).one_or_none()
+        if row is None or row._mapping["tenant_id"] != scope.tenant_id or row._mapping["owner_id"] != scope.owner_id:
+            raise RuntimeError("Root owner/tenant binding failed before commit.")
+
     def scope_for(self, principal: Principal | None) -> OwnershipScope | None:
         if self.mode == "off":
             return None
         if principal is None or self.auth_config is None:
             return None
+        if self.mode == "tenant_roles":
+            if principal.issuer != self.auth_config.issuer:
+                raise PermissionError("Authenticated principal issuer is not configured.")
+            try:
+                with self.database.engine.connect() as connection:
+                    matches = connection.execute(text("""
+                        SELECT id,tenant_id,role FROM tenant_memberships
+                        WHERE oidc_issuer=:issuer AND oidc_subject=:subject AND active=1
+                        ORDER BY tenant_id,id
+                    """), {"issuer":principal.issuer,"subject":principal.subject}).all()
+            except Exception as exc:
+                raise RuntimeError("Tenant membership lookup failed.") from exc
+            if len(matches) != 1:
+                raise PermissionError("Principal does not have exactly one active tenant membership.")
+            membership = matches[0]
+            if membership.tenant_id != principal.tenant_id or ("tenant:" + membership.role) not in principal.scopes:
+                raise PermissionError("Principal membership changed during request authorization.")
+            return OwnershipScope(membership.id, membership.tenant_id, membership.role)
         if (principal.issuer != self.auth_config.issuer or principal.subject != self.auth_config.legacy_subject
                 or principal.tenant_id != self.auth_config.tenant_id or "legacy:operator" not in principal.scopes):
             raise PermissionError("Authenticated principal lacks the legacy owner authorization.")
@@ -152,6 +238,12 @@ class ResourceAuthorization:
 def scoped_root(model, scope: OwnershipScope):
     # Table names come only from internal ORM classes, never request input.
     table = model.__tablename__
+    if table == "agents" and scope.role in {"admin", "member"}:
+        predicate = f"{table}.tenant_id=:tenant_id"
+        params = {"tenant_id": scope.tenant_id}
+        if scope.role == "member":
+            predicate += f" AND {table}.published=1 AND {table}.enabled=1"
+        return text(predicate).bindparams(**params)
     return text(f"{table}.owner_id=:owner_id AND {table}.tenant_id=:tenant_id").bindparams(
         owner_id=scope.owner_id, tenant_id=scope.tenant_id
     )

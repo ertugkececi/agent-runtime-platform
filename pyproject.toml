@@ -26,6 +26,7 @@ dependencies = [
 agent-runtime-login = "agent_runtime_platform.codex_login:main"
 agent-runtime-worker = "agent_runtime_platform.queue_worker:main"
 agent-runtime-tenant-migrate = "agent_runtime_platform.tenant_migration:main"
+agent-runtime-tenant-role-migrate = "agent_runtime_platform.tenant_roles_migration:main"
 
 [project.optional-dependencies]
 dev = [

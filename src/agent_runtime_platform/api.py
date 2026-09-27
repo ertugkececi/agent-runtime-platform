@@ -60,6 +60,7 @@ def create_app(
     resource_auth = ResourceAuthorization(database, auth_config)
     app.state.resource_auth = resource_auth
     runtime.resource_auth = resource_auth
+    room_runtime.resource_auth = resource_auth
     app.add_middleware(AuthMiddleware, auth=auth)
     install_auth_routes(app, auth)
 
@@ -88,7 +89,9 @@ def create_app(
     @app.get("/a2a/targets")
     def list_a2a_targets(request: Request) -> list[dict]:
         """Return safe discovery metadata; configured URLs and credentials stay private."""
-        ownership_scope(request)
+        scope = ownership_scope(request)
+        if scope is not None and scope.role in {"admin", "member"}:
+            raise HTTPException(status_code=403, detail="Global catalogs are unavailable in tenant role mode.")
         try:
             return [{"id": target["id"], "kind": "a2a", "capabilities": target["capabilities"]}
                     for target in configured_targets()]
@@ -97,7 +100,9 @@ def create_app(
 
     @app.get("/mcp/tools")
     def list_mcp_tools(request: Request) -> list[dict]:
-        ownership_scope(request)
+        scope = ownership_scope(request)
+        if scope is not None and scope.role in {"admin", "member"}:
+            raise HTTPException(status_code=403, detail="Global catalogs are unavailable in tenant role mode.")
         try:
             return public_tool_catalog()
         except MCPConfigurationError as exc:
@@ -105,7 +110,9 @@ def create_app(
 
     @app.get("/codex/models")
     def codex_models(request: Request) -> list[dict]:
-        ownership_scope(request)
+        scope = ownership_scope(request)
+        if scope is not None and scope.role in {"admin", "member"}:
+            raise HTTPException(status_code=403, detail="Global catalogs are unavailable in tenant role mode.")
         try:
             return list_codex_models()
         except Exception as exc:
@@ -114,7 +121,10 @@ def create_app(
     @app.post("/agents", status_code=status.HTTP_201_CREATED)
     def create_agent(request: AgentCreate, http_request: Request) -> dict:
         try:
-            return runtime.create_agent(request.model_dump(), ownership_scope(http_request))
+            scope = ownership_scope(http_request)
+            if scope is not None and scope.role == "member":
+                raise HTTPException(status_code=403, detail="Only tenant admins can create agents.")
+            return runtime.create_agent(request.model_dump(), scope)
         except InvalidMessageError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -131,6 +141,8 @@ def create_app(
             return runtime.update_agent(agent_id, request.model_dump(exclude_unset=True, exclude_none=True), ownership_scope(http_request))
         except AgentNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Agent not found.") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="This action is not allowed.") from exc
         except InvalidMessageError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
