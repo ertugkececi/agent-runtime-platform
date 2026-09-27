@@ -41,7 +41,21 @@
       .theme-toggle { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #dce2eb; border-radius: 9px; padding: 7px 10px; background: #fff; color: #34415a; font-size: 13px; font-weight: 650; white-space: nowrap; }
       .theme-toggle:hover { background: #edf1f7; }
       .theme-toggle:focus-visible { outline: 2px solid #6b83e0; outline-offset: 2px; }
-      .layout { width: min(1120px, calc(100% - 36px)); margin: 30px auto; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 22px; }
+      .layout { width: min(1120px, calc(100% - 36px)); margin: 24px auto; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 22px; }
+      .primary-nav { display: flex; gap: 8px; width: min(1120px, calc(100% - 36px)); margin: 18px auto 0; overflow-x: auto; }
+      .nav-button { flex: 0 0 auto; border: 1px solid #dce2eb; border-radius: 9px; padding: 9px 13px; color: #49566b; background: #fff; font-weight: 650; }
+      .nav-button[aria-current="page"] { color: #fff; background: #3156d3; border-color: #3156d3; }
+      .page-screen { width: min(920px, calc(100% - 36px)); margin: 24px auto; }
+      .page-screen .panel { max-width: 760px; margin: 0 auto; }
+      .page-screen h1 { font-size: 23px; }
+      .agent-list { display: grid; gap: 8px; margin: 18px 0; }
+      .agent-card { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; text-align: left; border: 1px solid #dce2eb; border-radius: 10px; color: inherit; background: transparent; }
+      .agent-card[aria-pressed="true"] { border-color: #3156d3; box-shadow: 0 0 0 2px #3156d322; }
+      .agent-card span { min-width: 0; }
+      .agent-card small { display: block; margin-top: 3px; color: #718096; }
+      .workspace-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .workspace-heading h1 { margin: 0; }
+      .workspace-heading p { margin: 4px 0 0; }
       .panel, .chat { background: #fff; border: 1px solid #e4e9f0; border-radius: 16px; box-shadow: 0 10px 30px #22314a0a; }
       .panel { padding: 22px; align-self: start; }
       h1, h2, p { margin-top: 0; }
@@ -87,8 +101,6 @@
       .room-agent-option input { width: auto; }
       .room-controls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
       .room-controls select { flex: 1; min-width: 0; }
-      .mode-switch { display: flex; gap: 7px; }
-      .mode-switch .button { padding: 8px 10px; font-size: 12px; }
       .room-run { color: #718096; font-size: 12px; }
       [data-theme="dark"] .bubble-row.moderator .speaker { color: #b8c8ff; }
       [data-theme="dark"] .bubble-row.moderator .bubble { color: #f0f4ff; background: #2c3e68; border-color: #50689f; }
@@ -100,6 +112,9 @@
       :root[data-theme="dark"] { color-scheme: dark; color: #edf2fa; background: #10151e; }
       [data-theme="dark"] .topbar, [data-theme="dark"] .panel, [data-theme="dark"] .chat { background: #1b2431; border-color: #354255; box-shadow: 0 10px 30px #060a1255; }
       [data-theme="dark"] .topbar a { color: #c0d0e9; }
+      [data-theme="dark"] .nav-button, [data-theme="dark"] .agent-card { color: #d1dbea; background: #1b2431; border-color: #45546a; }
+      [data-theme="dark"] .nav-button[aria-current="page"] { color: #fff; background: #4268d3; border-color: #4268d3; }
+      [data-theme="dark"] .agent-card[aria-pressed="true"] { border-color: #94acff; }
       [data-theme="dark"] .muted, [data-theme="dark"] #status { color: #b5c3d6; }
       [data-theme="dark"] label, [data-theme="dark"] summary { color: #d1dbea; }
       [data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea { color: #f0f5fc; background: #141c28; border-color: #45546a; }
@@ -116,12 +131,14 @@
       [data-theme="dark"] .bubble-row.user .bubble { color: #fff; background: #395dbf; }
       @media (max-width: 760px) {
         .topbar { padding: 0 17px; }
+        .primary-nav { width: calc(100% - 20px); margin-top: 10px; gap: 6px; }
+        .nav-button { padding: 9px 11px; font-size: 13px; }
         .layout { width: min(100% - 20px, 600px); margin: 12px auto; grid-template-columns: 1fr; gap: 12px; }
+        .page-screen { width: min(100% - 20px, 600px); margin: 12px auto; }
         .panel { padding: 17px; }
+        .workspace-heading { align-items: flex-start; flex-direction: column; }
         .chat { min-height: 58vh; }
         .chat-head { align-items: flex-start; flex-direction: column; }
-        .mode-switch { width: 100%; }
-        .mode-switch .button { flex: 1; }
         .bubble { max-width: 90%; }
       }
       @media (max-width: 420px) {
@@ -141,47 +158,21 @@
       </div>
     </header>
     <section id="login-required" hidden><h1>Oturum aç</h1><p class="muted">Bu çalışma alanına erişmek için yapılandırılmış tek kullanıcı hesabıyla giriş yap.</p><a class="button" href="/auth/login">OIDC ile giriş yap</a></section>
-    <main class="layout">
+    <nav class="primary-nav" aria-label="Ana gezinme">
+      <button class="nav-button" type="button" data-screen="chat">Sohbet</button>
+      <button class="nav-button" type="button" data-screen="rooms">Grup odaları</button>
+      <button class="nav-button" type="button" data-screen="agents">Ajanlar</button>
+      <button class="nav-button" type="button" data-screen="new-agent">Yeni ajan</button>
+    </nav>
+    <main id="conversation-workspace" class="layout">
       <aside class="panel">
-        <h1>Sohbet</h1>
-        <p class="muted">Bir ajan seç ve konuşmaya başla. Sohbet geçmişin bu yerel veritabanında saklanır.</p>
+        <div class="workspace-heading"><div><h1 id="workspace-title">Sohbet</h1><p class="muted" id="workspace-description">Bir ajan seç ve konuşmaya başla.</p></div></div>
         <p class="muted">Codex sağlayıcısı sunucudaki ChatGPT girişini kullanır (<code>codex login status</code>).</p>
         <div id="single-chat-tools">
         <label for="agent-select">Ajan</label>
         <select id="agent-select" aria-label="Sohbet edilecek ajan"></select>
         <button class="button secondary full" id="new-chat" type="button">Yeni sohbet</button>
 
-        <details id="edit-agent-details" hidden>
-          <summary>Seçili ajanı düzenle</summary>
-          <form id="edit-agent-form">
-            <label for="edit-model-name">Codex modeli</label>
-            <select id="edit-model-name" required></select>
-            <label for="edit-model-effort">Düşünme eforu</label>
-            <select id="edit-model-effort"></select>
-            <label for="edit-agent-instructions">Talimatlar</label>
-            <textarea id="edit-agent-instructions" maxlength="20000" required></textarea>
-            <p class="muted" id="edit-agent-hint">Değişiklikler sonraki yanıtta geçerli olur.</p>
-            <button class="button full" id="edit-agent-button" type="submit">Değişiklikleri kaydet</button>
-            <button class="button secondary full" id="reset-agent-button" type="button">Değişiklikleri geri al</button>
-          </form>
-        </details>
-
-        <details id="create-agent-details">
-          <summary>Yeni ajan oluştur</summary>
-          <form id="create-agent-form">
-            <label for="agent-name">Ad</label>
-            <input id="agent-name" name="name" value="Kişisel Asistan" maxlength="120" required />
-            <label for="model-name">Codex modeli</label>
-            <select id="model-name" name="model_name" required disabled><option value="">Modeller yükleniyor…</option></select>
-            <label for="model-effort">Düşünme eforu</label>
-            <select id="model-effort" name="model_reasoning_effort" required disabled></select>
-            <label for="agent-instructions">Talimatlar</label>
-            <textarea id="agent-instructions" name="instructions" maxlength="20000" required>Yardımcı bir asistansın. Kullanıcının diliyle yanıt ver.</textarea>
-            <label for="agent-capabilities">Yetenekler (virgülle ayır)</label>
-            <input id="agent-capabilities" name="capabilities" placeholder="araştırma, yazılım" />
-            <button class="button full" id="create-agent-button" type="submit" disabled>Ajanı oluştur</button>
-          </form>
-        </details>
         </div>
         <section id="room-tools" hidden aria-label="Grup odası yönetimi">
           <h2 style="font-size:15px; margin:0 0 8px;">Grup odası</h2>
@@ -206,10 +197,7 @@
       <section class="chat" aria-label="Ajan sohbeti">
         <div class="chat-head">
           <div><h2 id="chat-title">Yeni sohbet</h2><p id="status" aria-live="polite">Ajan seçip mesaj yazabilirsin.</p></div>
-          <div class="mode-switch" role="group" aria-label="Sohbet modu">
-            <button class="button secondary" id="chat-mode-button" type="button" aria-pressed="true">Sohbet</button>
-            <button class="button secondary" id="room-mode-button" type="button" aria-pressed="false">Grup odası</button>
-          </div>
+          <span class="muted" id="conversation-kind">Tek ajan sohbeti</span>
         </div>
         <div class="messages" id="messages" aria-live="polite">
           <div class="empty" id="empty-state">Mesajların ve ajan yanıtların burada görünecek.</div>
@@ -218,6 +206,55 @@
           <textarea id="message-input" placeholder="Mesajını yaz… (Ctrl/⌘ + Enter gönderir)" maxlength="20000" required></textarea>
           <button class="button" id="send-button" type="submit">Gönder</button>
         </form>
+      </section>
+    </main>
+    <main class="page-screen" id="agents-screen" hidden>
+      <section class="panel" aria-labelledby="agents-heading">
+        <h1 id="agents-heading">Ajan yönetimi</h1>
+        <p class="muted">Ajanları seç, yapılandırmalarını gözden geçir ve talimat/model ayarlarını düzenle.</p>
+        <p class="muted" id="agent-edit-feedback" role="status" aria-live="polite"></p>
+        <div id="agent-list" class="agent-list" aria-label="Ajan listesi"></div>
+        <div id="agent-edit-slot">
+        <details id="edit-agent-details" open>
+          <summary>Seçili ajanı düzenle</summary>
+          <form id="edit-agent-form">
+            <label for="edit-model-name">Codex modeli</label>
+            <select id="edit-model-name" required></select>
+            <label for="edit-model-effort">Düşünme eforu</label>
+            <select id="edit-model-effort"></select>
+            <label for="edit-agent-instructions">Talimatlar</label>
+            <textarea id="edit-agent-instructions" maxlength="20000" required></textarea>
+            <p class="muted" id="edit-agent-hint">Değişiklikler sonraki yanıtta geçerli olur.</p>
+            <button class="button full" id="edit-agent-button" type="submit">Değişiklikleri kaydet</button>
+            <button class="button secondary full" id="reset-agent-button" type="button">Değişiklikleri geri al</button>
+          </form>
+        </details>
+        </div>
+      </section>
+    </main>
+    <main class="page-screen" id="new-agent-screen" hidden>
+      <section class="panel" aria-labelledby="new-agent-heading">
+        <h1 id="new-agent-heading">Yeni ajan oluştur</h1>
+        <p class="muted">Ajanın adını, modelini, talimatlarını ve yeteneklerini belirle.</p>
+        <p class="muted" id="agent-create-feedback" role="status" aria-live="polite"></p>
+        <div id="agent-create-slot">
+        <details id="create-agent-details" open>
+          <summary>Ajan özellikleri</summary>
+          <form id="create-agent-form">
+            <label for="agent-name">Ad</label>
+            <input id="agent-name" name="name" value="Kişisel Asistan" maxlength="120" required />
+            <label for="model-name">Codex modeli</label>
+            <select id="model-name" name="model_name" required disabled><option value="">Modeller yükleniyor…</option></select>
+            <label for="model-effort">Düşünme eforu</label>
+            <select id="model-effort" name="model_reasoning_effort" required disabled></select>
+            <label for="agent-instructions">Talimatlar</label>
+            <textarea id="agent-instructions" name="instructions" maxlength="20000" required>Yardımcı bir asistansın. Kullanıcının diliyle yanıt ver.</textarea>
+            <label for="agent-capabilities">Yetenekler (virgülle ayır)</label>
+            <input id="agent-capabilities" name="capabilities" placeholder="araştırma, yazılım" />
+            <button class="button full" id="create-agent-button" type="submit" disabled>Ajanı oluştur</button>
+          </form>
+        </details>
+        </div>
       </section>
     </main>
     <script>
@@ -244,9 +281,21 @@
       const roomModeratorSelect = document.getElementById("room-moderator");
       const roomSelect = document.getElementById("room-select");
       const roomCreateButton = document.getElementById("create-room-button");
-      const chatModeButton = document.getElementById("chat-mode-button");
-      const roomModeButton = document.getElementById("room-mode-button");
+      const navigationButtons = [...document.querySelectorAll("[data-screen]")];
+      const conversationWorkspace = document.getElementById("conversation-workspace");
+      const agentsScreen = document.getElementById("agents-screen");
+      const newAgentScreen = document.getElementById("new-agent-screen");
+      const agentList = document.getElementById("agent-list");
+      const agentEditFeedback = document.getElementById("agent-edit-feedback");
+      const agentCreateFeedback = document.getElementById("agent-create-feedback");
+      let currentScreen = "chat";
+      let screenGeneration = 0;
       let viewMode = "chat";
+      let managedAgentId = "";
+      let chatContextGeneration = 0;
+      let monitoredRunId = "";
+      let chatDraft = "";
+      let roomDraft = "";
       let activeRoomId = localStorage.getItem("agentRuntimeRoomId") || "";
       let activeRoomRunId = "";
       let roomRunInFlight = false;
@@ -272,6 +321,7 @@
       let activeRunId = "";
       let sendInFlight = false;
       let uncertainSubmission = false;
+      let chatSubmissionMessage = "";
       let conversationRetryTimer = 0;
       let agents = [];
       let codexModels = [];
@@ -285,6 +335,7 @@
         if (!authEnabled) return true;
         if (!session.authenticated) {
           document.querySelector("main.layout").hidden = true;
+          document.querySelectorAll("main.page-screen, nav.primary-nav").forEach((element) => { element.hidden = true; });
           document.getElementById("login-required").hidden = false;
           document.getElementById("login-link").hidden = false;
           return false;
@@ -319,6 +370,20 @@
       function setStatus(message, isError = false) {
         statusElement.textContent = message;
         statusElement.classList.toggle("error", isError);
+      }
+
+      function setAgentFormStatus(message, isError = false, formScreen = currentScreen) {
+        const feedback = formScreen === "agents" ? agentEditFeedback
+          : formScreen === "new-agent" ? agentCreateFeedback : null;
+        if (feedback) {
+          feedback.textContent = message;
+          feedback.classList.toggle("error", isError);
+        }
+        if (currentScreen === formScreen) setStatus(message, isError);
+      }
+
+      function isCurrentFormContext(formScreen, generation) {
+        return currentScreen === formScreen && screenGeneration === generation;
       }
 
       function readSavedRooms() {
@@ -475,24 +540,28 @@
 
       function setViewMode(mode) {
         if (mode === viewMode) return;
+        if (viewMode === "chat") chatDraft = messageInput.value;
+        else roomDraft = messageInput.value;
         viewGeneration += 1;
         viewMode = mode;
+        messageInput.value = mode === "chat" ? chatDraft : roomDraft;
         try { localStorage.setItem("agentRuntimeViewMode", mode); } catch (_) { /* Mode still changes for this page. */ }
-        activeRunId = "";
-        sendInFlight = false;
-        uncertainSubmission = false;
+        monitoredRunId = "";
         clearTimeout(conversationRetryTimer);
         roomHistoryLoading = mode === "room";
-        sendButton.disabled = mode === "room";
-        messageInput.disabled = false;
+        sendButton.disabled = mode === "room" || (mode === "chat" && (sendInFlight || Boolean(activeRunId) || uncertainSubmission));
+        messageInput.disabled = mode === "chat" && sendInFlight;
         singleChatTools.hidden = mode !== "chat";
         roomTools.hidden = mode !== "room";
-        chatModeButton.setAttribute("aria-pressed", String(mode === "chat"));
-        roomModeButton.setAttribute("aria-pressed", String(mode === "room"));
+        document.getElementById("workspace-title").textContent = mode === "room" ? "Grup odaları" : "Sohbet";
+        document.getElementById("workspace-description").textContent = mode === "room"
+          ? "Ayrı odalarda ajanları sırayla çalıştır ve sonuçları takip et."
+          : "Bir ajan seç ve konuşmaya başla. Sohbet geçmişin saklanır.";
+        document.getElementById("conversation-kind").textContent = mode === "room" ? "Grup odası" : "Tek ajan sohbeti";
         if (mode === "chat") {
           messageInput.placeholder = "Mesajını yaz… (Ctrl/⌘ + Enter gönderir)";
           document.getElementById("chat-title").textContent = conversationId ? "Sohbet geçmişi" : "Yeni sohbet";
-          setStatus("Ajan seçip mesaj yazabilirsin.");
+          setStatus(chatSubmissionMessage || "Ajan seçip mesaj yazabilirsin.", uncertainSubmission);
           void loadConversation();
         } else {
           messageInput.placeholder = "Grup odasına vereceğin görevi yaz…";
@@ -610,8 +679,6 @@
         roomCreateInFlight = true;
         roomCreateButton.disabled = true;
         sendButton.disabled = true;
-        chatModeButton.disabled = true;
-        roomModeButton.disabled = true;
         document.getElementById("open-room-button").disabled = true;
         setStatus("Grup odası oluşturuluyor…");
         try {
@@ -632,8 +699,6 @@
         } finally {
           roomCreateInFlight = false;
           renderRoomOrder();
-          chatModeButton.disabled = false;
-          roomModeButton.disabled = false;
           document.getElementById("open-room-button").disabled = false;
           sendButton.disabled = viewMode === "room" &&
             (roomHistoryLoading || Boolean(activeRoomRunId) || roomSubmissionUncertain);
@@ -649,8 +714,6 @@
         roomCreateButton.disabled = true;
         sendButton.disabled = true;
         messageInput.disabled = true;
-        chatModeButton.disabled = true;
-        roomModeButton.disabled = true;
         document.getElementById("open-room-button").disabled = true;
         setStatus("Grup görevi kuyruğa gönderiliyor…");
         const knownIds = new Set(roomRuns.map((run) => run.id));
@@ -715,8 +778,6 @@
           roomRunInFlight = false;
           renderRoomOrder();
           if (generation === viewGeneration) {
-            chatModeButton.disabled = false;
-            roomModeButton.disabled = false;
             document.getElementById("open-room-button").disabled = false;
             messageInput.disabled = false;
             sendButton.disabled = Boolean(activeRoomRunId) || roomSubmissionUncertain;
@@ -746,14 +807,10 @@
       document.getElementById("open-room-button").addEventListener("click", () => {
         if (!roomSelect.value || roomCreateInFlight || roomRunInFlight) return;
         activeRoomId = roomSelect.value;
-        if (viewMode !== "room") setViewMode("room");
-        else {
-          viewGeneration += 1;
-          void loadRoomView(activeRoomId);
-        }
+        setAppScreen("rooms", { writeHistory: true });
+        viewGeneration += 1;
+        void loadRoomView(activeRoomId);
       });
-      roomModeButton.addEventListener("click", () => setViewMode("room"));
-      chatModeButton.addEventListener("click", () => setViewMode("chat"));
 
       const effortLabels = { low: "Düşük", medium: "Orta", high: "Yüksek", xhigh: "Çok yüksek", max: "Maksimum", ultra: "Ultra" };
       function updateEffortOptions() {
@@ -814,8 +871,44 @@
           : "Değişiklikler sonraki yanıtta geçerli olur.";
       }
 
+      function renderAgentCards() {
+        agentList.replaceChildren();
+        for (const agent of agents) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "agent-card";
+          button.setAttribute("aria-pressed", String(agent.id === managedAgentId));
+          const name = document.createElement("span");
+          name.textContent = agent.name;
+          const details = document.createElement("small");
+          details.textContent = `${agent.model_provider} · ${agent.model_name}${agent.capabilities?.length ? ` · ${agent.capabilities.join(", ")}` : ""}`;
+          name.append(details);
+          button.append(name);
+          button.addEventListener("click", () => selectManagedAgent(agent.id));
+          agentList.append(button);
+        }
+        if (!agents.length) {
+          const empty = document.createElement("p");
+          empty.className = "muted";
+          empty.textContent = "Henüz etkin ajan yok. Yeni ajan ekranından bir ajan oluştur.";
+          agentList.append(empty);
+        }
+      }
+
+      function selectManagedAgent(agentId) {
+        if (!agents.some((agent) => agent.id === agentId)) return;
+        managedAgentId = agentId;
+        renderAgentCards();
+        renderEditAgent();
+      }
+
       function renderEditAgent() {
-        const agent = agents.find((item) => item.id === agentSelect.value);
+        let agent = agents.find((item) => item.id === (managedAgentId || agentSelect.value));
+        if (!agent && agents.length) {
+          managedAgentId = agents.some((item) => item.id === agentSelect.value) ? agentSelect.value : agents[0].id;
+          agent = agents.find((item) => item.id === managedAgentId);
+        }
+        renderAgentCards();
         editAgentDetails.hidden = !agent;
         if (!agent) {
           editAgentDetails.open = false;
@@ -826,7 +919,7 @@
       }
 
       editModelSelect.addEventListener("change", () => {
-        const agent = agents.find((item) => item.id === agentSelect.value);
+        const agent = agents.find((item) => item.id === (managedAgentId || agentSelect.value));
         const model = codexModels.find((item) => item.id === editModelSelect.value);
         if (agent && model) {
           const effort = model.id === agent.model_name
@@ -852,7 +945,7 @@
         modelSelect.disabled = false;
         updateEffortOptions();
         createAgentButton.disabled = effortSelect.disabled;
-        const editingAgent = agents.find((item) => item.id === agentSelect.value);
+        const editingAgent = agents.find((item) => item.id === (managedAgentId || agentSelect.value));
         if (editingAgent) {
           renderEditModelOptions(editingAgent, editModelSelect.value, editEffortSelect.value || editingAgent.model_reasoning_effort);
         }
@@ -898,13 +991,15 @@
         return [...items].reverse().find((item) => item.sender_type === "user" && item.run_id);
       }
 
-      async function loadConversation({ resume = true } = {}) {
+      async function loadConversation({ resume = true, render = true } = {}) {
         const requestedId = conversationId;
         const generation = viewGeneration;
         if (!requestedId) {
           activeRunId = "";
-          document.getElementById("chat-title").textContent = "Yeni sohbet";
-          renderMessages([]);
+          if (render && currentScreen === "chat" && viewMode === "chat") {
+            document.getElementById("chat-title").textContent = "Yeni sohbet";
+            renderMessages([]);
+          }
           return null;
         }
         try {
@@ -912,22 +1007,26 @@
           if (requestedId !== conversationId || generation !== viewGeneration) return null;
           clearTimeout(conversationRetryTimer);
           conversationRetryTimer = 0;
-          document.getElementById("chat-title").textContent = "Sohbet geçmişi";
           const items = conversation.messages || [];
-          renderMessages(items);
-          if (resume) {
+          if (render && currentScreen === "chat" && viewMode === "chat") {
+            document.getElementById("chat-title").textContent = "Sohbet geçmişi";
+            renderMessages(items);
+          }
+          if (resume && currentScreen === "chat" && viewMode === "chat") {
             const pending = newestRunMessage(items);
-            if (pending && pending.run_id !== activeRunId) {
+            if (pending && pending.run_id !== monitoredRunId) {
               void monitorRun(pending.run_id, requestedId, generation);
             }
           }
           return conversation;
         } catch (error) {
-          if (requestedId === conversationId && generation === viewGeneration) {
+          if (requestedId === conversationId && generation === viewGeneration &&
+            currentScreen === "chat" && viewMode === "chat") {
             setStatus("Sohbet yüklenemedi. Bağlantı kurulunca yeniden denenecek.", true);
             clearTimeout(conversationRetryTimer);
             conversationRetryTimer = setTimeout(() => {
-              if (requestedId === conversationId && generation === viewGeneration) void loadConversation();
+              if (requestedId === conversationId && generation === viewGeneration &&
+                currentScreen === "chat" && viewMode === "chat") void loadConversation();
             }, 3000);
           }
           return null;
@@ -936,6 +1035,7 @@
 
       async function monitorRun(runId, requestedConversationId, generation) {
         activeRunId = runId;
+        monitoredRunId = runId;
         let delay = 1200;
         while (runId === activeRunId && requestedConversationId === conversationId && generation === viewGeneration) {
           try {
@@ -947,6 +1047,7 @@
               if (runId !== activeRunId || requestedConversationId !== conversationId || generation !== viewGeneration) return;
               showRunState("completed", `· Çalıştırma ${runId}`);
               activeRunId = "";
+              monitoredRunId = "";
               uncertainSubmission = false;
               sendButton.disabled = false;
               return;
@@ -957,6 +1058,7 @@
               const detail = run.error_code ? `(${run.error_code})` : "";
               showRunState("failed", detail, true);
               activeRunId = "";
+              monitoredRunId = "";
               uncertainSubmission = false;
               return;
             }
@@ -995,14 +1097,16 @@
         if (agents.some((agent) => agent.id === savedAgentId)) agentSelect.value = savedAgentId;
         else agentSelect.selectedIndex = 0;
         localStorage.setItem("agentRuntimeAgentId", agentSelect.value);
-        createAgentDetails.open = false;
+        if (!agents.some((agent) => agent.id === managedAgentId)) managedAgentId = agentSelect.value;
         renderEditAgent();
         await loadConversation();
       }
 
       document.getElementById("new-chat").addEventListener("click", () => {
+        chatContextGeneration += 1;
         viewGeneration += 1;
         activeRunId = "";
+        monitoredRunId = "";
         sendInFlight = false;
         uncertainSubmission = false;
         clearTimeout(conversationRetryTimer);
@@ -1011,14 +1115,19 @@
         conversationId = "";
         localStorage.removeItem("agentRuntimeConversationId");
         localStorage.setItem("agentRuntimeAgentId", agentSelect.value);
+        chatDraft = "";
+        chatSubmissionMessage = "";
+        messageInput.value = "";
         setStatus("Yeni sohbet hazır.");
         renderMessages([]);
         messageInput.focus();
       });
 
       agentSelect.addEventListener("change", () => {
+        chatContextGeneration += 1;
         viewGeneration += 1;
         activeRunId = "";
+        monitoredRunId = "";
         sendInFlight = false;
         uncertainSubmission = false;
         clearTimeout(conversationRetryTimer);
@@ -1027,6 +1136,9 @@
         conversationId = "";
         localStorage.removeItem("agentRuntimeConversationId");
         localStorage.setItem("agentRuntimeAgentId", agentSelect.value);
+        chatDraft = "";
+        chatSubmissionMessage = "";
+        messageInput.value = "";
         renderEditAgent();
         setStatus("Ajan değişti. Yeni sohbet başlatabilirsin.");
         renderMessages([]);
@@ -1034,7 +1146,8 @@
 
       document.getElementById("edit-agent-form").addEventListener("submit", async (event) => {
         event.preventDefault();
-        const agent = agents.find((item) => item.id === agentSelect.value);
+        const formScreen = currentScreen;
+        const agent = agents.find((item) => item.id === (managedAgentId || agentSelect.value));
         if (!agent) return;
         const changes = {};
         const instructions = editInstructions.value.trim();
@@ -1043,19 +1156,18 @@
           const modelName = editModelSelect.value;
           const effort = editEffortSelect.value;
           if (modelName !== agent.model_name && !effort) {
-            setStatus("Yeni model için düşünme eforu seç.", true);
+            setAgentFormStatus("Yeni model için düşünme eforu seç.", true, formScreen);
             return;
           }
           if (modelName !== agent.model_name) changes.model_name = modelName;
           if (effort && effort !== agent.model_reasoning_effort) changes.model_reasoning_effort = effort;
         }
         if (!Object.keys(changes).length) {
-          setStatus("Değişiklik yapılmadı.");
+          setAgentFormStatus("Değişiklik yapılmadı.", false, formScreen);
           return;
         }
         editAgentButton.disabled = true;
-        agentSelect.disabled = true;
-        setStatus("Ajan ayarları kaydediliyor…");
+        setAgentFormStatus("Ajan ayarları kaydediliyor…", false, formScreen);
         try {
           const updated = await request(`/agents/${encodeURIComponent(agent.id)}`, {
             method: "PATCH",
@@ -1063,20 +1175,21 @@
           });
           agents = agents.map((item) => item.id === updated.id ? updated : item);
           renderEditAgent();
-          setStatus("Ajan ayarları kaydedildi. Sonraki yanıt yeni ayarları kullanacak.");
+          setAgentFormStatus("Ajan ayarları kaydedildi. Sonraki yanıt yeni ayarları kullanacak.", false, formScreen);
         } catch (error) {
-          setStatus(error.message, true);
+          setAgentFormStatus(error.message, true, formScreen);
         } finally {
           editAgentButton.disabled = false;
-          agentSelect.disabled = false;
         }
       });
 
       document.getElementById("create-agent-form").addEventListener("submit", async (event) => {
         event.preventDefault();
+        const formScreen = currentScreen;
+        const formGeneration = screenGeneration;
         const button = document.getElementById("create-agent-button");
         button.disabled = true;
-        setStatus("Ajan oluşturuluyor…");
+        setAgentFormStatus("Ajan oluşturuluyor…", false, formScreen);
         const capabilities = document.getElementById("agent-capabilities").value
           .split(",").map((value) => value.trim()).filter(Boolean);
         try {
@@ -1091,14 +1204,21 @@
               capabilities,
             }),
           });
-          conversationId = "";
-          localStorage.removeItem("agentRuntimeConversationId");
-          await loadAgents(agent.id);
-          setStatus("Ajan oluşturuldu. Mesajını yazabilirsin.");
-          document.getElementById("agent-capabilities").value = "";
-          messageInput.focus();
+          await loadAgents();
+          const stillOnForm = isCurrentFormContext(formScreen, formGeneration);
+          setAgentFormStatus("Ajan oluşturuldu. Mesajını yazabilirsin.", false, formScreen);
+          if (stillOnForm) {
+            conversationId = "";
+            localStorage.removeItem("agentRuntimeConversationId");
+            agentSelect.value = agent.id;
+            localStorage.setItem("agentRuntimeAgentId", agent.id);
+            renderEditAgent();
+            setAppScreen("chat", { writeHistory: true });
+            document.getElementById("agent-capabilities").value = "";
+            messageInput.focus();
+          }
         } catch (error) {
-          setStatus(error.message, true);
+          setAgentFormStatus(error.message, true, formScreen);
         } finally {
           button.disabled = false;
         }
@@ -1113,8 +1233,11 @@
         const content = messageInput.value.trim();
         const agentId = agentSelect.value;
         if (!content || !agentId || activeRunId || sendInFlight || uncertainSubmission) return;
-        const generation = viewGeneration;
+        const contextGeneration = chatContextGeneration;
+        chatDraft = content;
         sendInFlight = true;
+        agentSelect.disabled = true;
+        document.getElementById("new-chat").disabled = true;
         sendButton.disabled = true;
         messageInput.disabled = true;
         setStatus("Mesaj kuyruğa gönderiliyor…");
@@ -1127,14 +1250,14 @@
               method: "POST",
               body: JSON.stringify({ agent_id: agentId }),
             });
-            if (generation !== viewGeneration) return;
+            if (contextGeneration !== chatContextGeneration) return;
             targetConversationId = created.id;
             conversationId = targetConversationId;
             localStorage.setItem("agentRuntimeConversationId", conversationId);
             localStorage.setItem("agentRuntimeAgentId", agentId);
           } else {
             const before = await request(`/conversations/${encodeURIComponent(targetConversationId)}`);
-            if (generation !== viewGeneration || targetConversationId !== conversationId) return;
+            if (contextGeneration !== chatContextGeneration || targetConversationId !== conversationId) return;
             beforeMessageIds = new Set((before.messages || []).map((item) => item.id));
           }
           asyncSubmissionStarted = true;
@@ -1142,24 +1265,31 @@
             method: "POST",
             body: JSON.stringify({ content }),
           });
-          if (generation !== viewGeneration || targetConversationId !== conversationId) return;
-          messageInput.value = "";
+          if (contextGeneration !== chatContextGeneration || targetConversationId !== conversationId) return;
           activeRunId = accepted.id;
+          monitoredRunId = "";
+          chatSubmissionMessage = "";
+          chatDraft = "";
           uncertainSubmission = false;
-          showRunState(accepted.status || "queued", `· Çalıştırma ${accepted.id}`);
-          await loadConversation({ resume: false });
-          if (generation !== viewGeneration || targetConversationId !== conversationId || activeRunId !== accepted.id) return;
-          void monitorRun(accepted.id, targetConversationId, generation);
+          if (currentScreen === "chat" && viewMode === "chat") {
+            messageInput.value = "";
+            showRunState(accepted.status || "queued", `· Çalıştırma ${accepted.id}`);
+            const activeViewGeneration = viewGeneration;
+            await loadConversation({ resume: false });
+            if (contextGeneration !== chatContextGeneration || targetConversationId !== conversationId ||
+              activeViewGeneration !== viewGeneration || activeRunId !== accepted.id) return;
+            void monitorRun(accepted.id, targetConversationId, activeViewGeneration);
+          }
         } catch (error) {
-          if (generation !== viewGeneration || targetConversationId !== conversationId) return;
+          if (contextGeneration !== chatContextGeneration || (targetConversationId && targetConversationId !== conversationId)) return;
           // A lost response can happen after the server accepted the message. Look for its
           // persisted run before allowing a manual retry, so a transient disconnect does
           // not create duplicate work.
           let acceptedRun = null;
           let recovered = null;
           if (targetConversationId) {
-            recovered = await loadConversation({ resume: false });
-            if (generation !== viewGeneration || targetConversationId !== conversationId) return;
+            recovered = await loadConversation({ resume: false, render: currentScreen === "chat" && viewMode === "chat" });
+            if (contextGeneration !== chatContextGeneration || targetConversationId !== conversationId) return;
             if (asyncSubmissionStarted) {
               acceptedRun = (recovered?.messages || []).find((item) =>
                 item.sender_type === "user" && item.content === content &&
@@ -1168,23 +1298,35 @@
           }
           if (acceptedRun) {
             uncertainSubmission = false;
-            messageInput.value = "";
             activeRunId = acceptedRun.run_id;
-            showRunState("queued", `· Çalıştırma ${acceptedRun.run_id}`);
-            void monitorRun(acceptedRun.run_id, targetConversationId, generation);
+            monitoredRunId = "";
+            chatSubmissionMessage = "";
+            chatDraft = "";
+            if (currentScreen === "chat" && viewMode === "chat") {
+              messageInput.value = "";
+              showRunState("queued", `· Çalıştırma ${acceptedRun.run_id}`);
+              void monitorRun(acceptedRun.run_id, targetConversationId, viewGeneration);
+            }
           } else {
-            setStatus(`${error.message} Gönderim sonucu doğrulanamadı; yinelenen görev oluşturmamak için sohbeti yenileyip geçmişi denetle.`, true);
-            // If the recovery read itself failed, keep sending locked until a refresh
-            // reloads the durable conversation and its run status.
+            // Chat and room views share the form controls. Preserve chat recovery state,
+            // but never paint it into or change the controls for the active room view.
             uncertainSubmission = asyncSubmissionStarted && recovered === null;
-            sendButton.disabled = uncertainSubmission;
+            chatSubmissionMessage = `${error.message} Gönderim sonucu doğrulanamadı; yinelenen görev oluşturmamak için sohbeti yenileyip geçmişi denetle.`;
+            if (currentScreen === "chat" && viewMode === "chat") {
+              setStatus(chatSubmissionMessage, true);
+              sendButton.disabled = uncertainSubmission;
+            }
           }
         } finally {
-          if (generation === viewGeneration) {
+          if (contextGeneration === chatContextGeneration) {
             sendInFlight = false;
-            messageInput.disabled = false;
-            sendButton.disabled = Boolean(activeRunId) || uncertainSubmission;
-            messageInput.focus();
+            agentSelect.disabled = false;
+            document.getElementById("new-chat").disabled = false;
+            if (currentScreen === "chat" && viewMode === "chat") {
+              messageInput.disabled = false;
+              sendButton.disabled = Boolean(activeRunId) || uncertainSubmission;
+              messageInput.focus();
+            }
           }
         }
       });
@@ -1195,10 +1337,46 @@
         }
       });
 
+      function screenFromHash() {
+        const value = window.location.hash.replace(/^#/, "");
+        return ["chat", "rooms", "agents", "new-agent"].includes(value) ? value : "";
+      }
+
+      function setAppScreen(screen, { writeHistory = false } = {}) {
+        if (!["chat", "rooms", "agents", "new-agent"].includes(screen)) screen = "chat";
+        const previousScreen = currentScreen;
+        currentScreen = screen;
+        if (screen !== previousScreen) screenGeneration += 1;
+        if (writeHistory && window.location.hash !== `#${screen}`) {
+          window.history.pushState({ screen }, "", `#${screen}`);
+        }
+        for (const button of navigationButtons) {
+          if (button.dataset.screen === screen) button.setAttribute("aria-current", "page");
+          else button.removeAttribute("aria-current");
+        }
+        const conversationVisible = screen === "chat" || screen === "rooms";
+        conversationWorkspace.hidden = !conversationVisible;
+        agentsScreen.hidden = screen !== "agents";
+        newAgentScreen.hidden = screen !== "new-agent";
+        if (screen === "chat" || screen === "rooms") {
+          const mode = screen === "rooms" ? "room" : "chat";
+          if (viewMode !== mode) setViewMode(mode);
+          else if (screen !== previousScreen && screen === "rooms" && activeRoomId) void loadRoomView(activeRoomId);
+          else if (screen !== previousScreen && screen === "chat") void loadConversation();
+        }
+      }
+
+      for (const button of navigationButtons) {
+        button.addEventListener("click", () => setAppScreen(button.dataset.screen, { writeHistory: true }));
+      }
+      window.addEventListener("hashchange", () => setAppScreen(screenFromHash() || "chat"));
+
       initializeAuth().then((allowed) => {
         if (!allowed) return;
         return loadAgents().then(loadCodexModels).then(() => {
-          if (localStorage.getItem("agentRuntimeViewMode") === "room") setViewMode("room");
+          const initialScreen = screenFromHash()
+            || (!agents.length ? "new-agent" : localStorage.getItem("agentRuntimeViewMode") === "room" ? "rooms" : "chat");
+          setAppScreen(initialScreen);
         });
       }).catch((error) => setStatus(error.message, true));
     </script>
