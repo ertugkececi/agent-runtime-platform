@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, NotRequired, TypedDict
 
 from langgraph.graph import END, START, StateGraph
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, text
 from sqlalchemy.orm import Session
 
 from agent_runtime_platform.database import Database
@@ -30,6 +30,7 @@ from agent_runtime_platform.models import (
 from agent_runtime_platform.providers import HandoffRequest, ProviderError, ProviderRegistry
 from agent_runtime_platform.mcp_tools import validate_tool_ids
 from agent_runtime_platform.a2a import A2AClient, A2AError, configured_targets, target_fingerprint
+from agent_runtime_platform.resource_auth import OwnershipScope, scoped_root, unique_run_parent
 
 
 class AgentNotFoundError(Exception):
@@ -227,7 +228,7 @@ class AgentRuntimeService:
         builder.add_edge("persist_response", END)
         self.graph = builder.compile()
 
-    def create_agent(self, data: dict[str, Any]) -> dict[str, Any]:
+    def create_agent(self, data: dict[str, Any], owner_scope: OwnershipScope | None = None) -> dict[str, Any]:
         if not self.providers.supports(data["model_provider"]):
             raise InvalidMessageError("The requested model provider is not configured.")
         try:
@@ -243,9 +244,11 @@ class AgentRuntimeService:
             session.commit()
             return _agent_payload(agent)
 
-    def list_agents(self, capability: str | None = None) -> list[dict[str, Any]]:
+    def list_agents(self, capability: str | None = None, owner_scope: OwnershipScope | None = None) -> list[dict[str, Any]]:
         with self.database.session() as session:
             statement = select(Agent)
+            if owner_scope is not None:
+                statement = statement.where(scoped_root(Agent, owner_scope))
             if capability is not None:
                 normalized_capability = capability.strip().casefold()
                 if not normalized_capability:
@@ -260,9 +263,12 @@ class AgentRuntimeService:
             agents = session.scalars(statement.order_by(Agent.created_at, Agent.id)).all()
             return [_agent_payload(agent) for agent in agents]
 
-    def update_agent(self, agent_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+    def update_agent(self, agent_id: str, changes: dict[str, Any], owner_scope: OwnershipScope | None = None) -> dict[str, Any]:
         with self.database.session() as session:
-            agent = session.get(Agent, agent_id)
+            statement = select(Agent).where(Agent.id == agent_id)
+            if owner_scope is not None:
+                statement = statement.where(scoped_root(Agent, owner_scope))
+            agent = session.scalar(statement)
             if agent is None:
                 raise AgentNotFoundError(agent_id)
             if "model_provider" in changes and not self.providers.supports(changes["model_provider"]):
@@ -288,11 +294,14 @@ class AgentRuntimeService:
                 session.commit()
             return _agent_payload(agent)
 
-    def create_conversation(self, agent_ids: list[str]) -> dict[str, Any]:
+    def create_conversation(self, agent_ids: list[str], owner_scope: OwnershipScope | None = None) -> dict[str, Any]:
         if len(set(agent_ids)) != len(agent_ids):
             raise InvalidMessageError("Agent IDs in a conversation must be unique.")
         with self.database.session() as session:
-            agents = session.scalars(select(Agent).where(Agent.id.in_(agent_ids))).all()
+            statement = select(Agent).where(Agent.id.in_(agent_ids))
+            if owner_scope is not None:
+                statement = statement.where(scoped_root(Agent, owner_scope))
+            agents = session.scalars(statement).all()
             agents_by_id = {agent.id: agent for agent in agents}
             if len(agents_by_id) != len(agent_ids):
                 missing = next(agent_id for agent_id in agent_ids if agent_id not in agents_by_id)
@@ -309,9 +318,12 @@ class AgentRuntimeService:
             session.commit()
             return self._conversation_payload(session, conversation)
 
-    def create_human_chat_conversation(self, agent_id: str) -> dict[str, Any]:
+    def create_human_chat_conversation(self, agent_id: str, owner_scope: OwnershipScope | None = None) -> dict[str, Any]:
         with self.database.session() as session:
-            agent = session.get(Agent, agent_id)
+            statement = select(Agent).where(Agent.id == agent_id)
+            if owner_scope is not None:
+                statement = statement.where(scoped_root(Agent, owner_scope))
+            agent = session.scalar(statement)
             if agent is None:
                 raise AgentNotFoundError(agent_id)
             if not agent.enabled:
@@ -325,9 +337,12 @@ class AgentRuntimeService:
             session.commit()
             return self._conversation_payload(session, conversation)
 
-    def get_conversation(self, conversation_id: str) -> dict[str, Any] | None:
+    def get_conversation(self, conversation_id: str, owner_scope: OwnershipScope | None = None) -> dict[str, Any] | None:
         with self.database.session() as session:
-            conversation = session.get(Conversation, conversation_id)
+            statement = select(Conversation).where(Conversation.id == conversation_id)
+            if owner_scope is not None:
+                statement = statement.where(scoped_root(Conversation, owner_scope))
+            conversation = session.scalar(statement)
             if conversation is None:
                 return None
             return self._conversation_payload(session, conversation)
@@ -374,6 +389,7 @@ class AgentRuntimeService:
         recipient_capability: str | None,
         content: str,
         asynchronous: bool = False,
+        owner_scope: OwnershipScope | None = None,
     ) -> dict[str, Any]:
         if (recipient_agent_id is None) == (recipient_capability is None):
             raise InvalidMessageError("Provide exactly one recipient ID or capability.")
@@ -382,13 +398,19 @@ class AgentRuntimeService:
 
         run_id = new_id()
         with self.database.session() as session:
-            conversation = session.get(Conversation, conversation_id)
+            conversation_query = select(Conversation).where(Conversation.id == conversation_id)
+            if owner_scope is not None:
+                conversation_query = conversation_query.where(scoped_root(Conversation, owner_scope))
+            conversation = session.scalar(conversation_query)
             if conversation is None:
                 raise ConversationNotFoundError(conversation_id)
             if conversation.status != "open":
                 raise ConversationConflictError("The conversation is not open.")
 
-            source = session.get(Agent, sender_agent_id)
+            source_query = select(Agent).where(Agent.id == sender_agent_id)
+            if owner_scope is not None:
+                source_query = source_query.where(scoped_root(Agent, owner_scope))
+            source = session.scalar(source_query)
             if source is None:
                 raise AgentNotFoundError(sender_agent_id)
             if not source.enabled:
@@ -399,7 +421,7 @@ class AgentRuntimeService:
                 normalized_capability = (recipient_capability or "").strip().casefold()
                 if not normalized_capability:
                     raise InvalidMessageError("Recipient capability cannot be blank.")
-                candidates = session.scalars(
+                candidate_query = (
                     select(Agent)
                     .join(AgentCapability, AgentCapability.agent_id == Agent.id)
                     .where(
@@ -408,14 +430,20 @@ class AgentRuntimeService:
                         Agent.id != sender_agent_id,
                     )
                     .order_by(Agent.created_at, Agent.id)
-                ).all()
+                )
+                if owner_scope is not None:
+                    candidate_query = candidate_query.where(scoped_root(Agent, owner_scope))
+                candidates = session.scalars(candidate_query).all()
                 if not candidates:
                     raise AgentCapabilityNotFoundError(normalized_capability)
                 if len(candidates) > 1:
                     raise AgentAmbiguousError(normalized_capability)
                 target = candidates[0]
             else:
-                target = session.get(Agent, recipient_agent_id)
+                target_query = select(Agent).where(Agent.id == recipient_agent_id)
+                if owner_scope is not None:
+                    target_query = target_query.where(scoped_root(Agent, owner_scope))
+                target = session.scalar(target_query)
                 if target is None:
                     raise AgentNotFoundError(recipient_agent_id)
                 if not target.enabled:
@@ -478,7 +506,7 @@ class AgentRuntimeService:
             session.commit()
 
         if asynchronous:
-            result = self.get_run(run_id)
+            result = self.get_run(run_id, owner_scope)
             if result is None:
                 raise RuntimeError("Queued run disappeared after commit.")
             return result
@@ -489,17 +517,20 @@ class AgentRuntimeService:
             self._mark_run_failed(run_id, exc)
             raise RunExecutionFailed(run_id) from exc
 
-        result = self.get_run(run_id)
+        result = self.get_run(run_id, owner_scope)
         if result is None:
             raise RunExecutionFailed(run_id)
         return result
 
     def send_human_message(
-        self, conversation_id: str, content: str, asynchronous: bool = False
+        self, conversation_id: str, content: str, asynchronous: bool = False, owner_scope: OwnershipScope | None = None
     ) -> dict[str, Any]:
         run_id = new_id()
         with self.database.session() as session:
-            conversation = session.get(Conversation, conversation_id)
+            conversation_query = select(Conversation).where(Conversation.id == conversation_id)
+            if owner_scope is not None:
+                conversation_query = conversation_query.where(scoped_root(Conversation, owner_scope))
+            conversation = session.scalar(conversation_query)
             if conversation is None:
                 raise ConversationNotFoundError(conversation_id)
             if conversation.status != "open":
@@ -508,7 +539,10 @@ class AgentRuntimeService:
             chat_session = session.get(HumanChatSession, conversation_id)
             if chat_session is None:
                 raise ConversationConflictError("This conversation is not a human-agent chat.")
-            target = session.get(Agent, chat_session.agent_id)
+            target_query = select(Agent).where(Agent.id == chat_session.agent_id)
+            if owner_scope is not None:
+                target_query = target_query.where(scoped_root(Agent, owner_scope))
+            target = session.scalar(target_query)
             if target is None:
                 raise AgentNotFoundError(chat_session.agent_id)
             if not target.enabled:
@@ -568,7 +602,7 @@ class AgentRuntimeService:
             session.commit()
 
         if asynchronous:
-            result = self.get_run(run_id)
+            result = self.get_run(run_id, owner_scope)
             if result is None:
                 raise RuntimeError("Queued run disappeared after commit.")
             return result
@@ -579,10 +613,21 @@ class AgentRuntimeService:
             self._mark_run_failed(run_id, exc)
             raise RunExecutionFailed(run_id) from exc
 
-        result = self.get_run(run_id)
+        result = self.get_run(run_id, owner_scope)
         if result is None:
             raise RunExecutionFailed(run_id)
         return result
+
+    def _scope_for_conversation(self, session: Session, conversation_id: str) -> OwnershipScope | None:
+        resource_auth = getattr(self, "resource_auth", None)
+        if resource_auth is None or resource_auth.mode == "off":
+            return None
+        row = session.execute(text(
+            "SELECT tenant_id,owner_id FROM conversations WHERE id=:id"
+        ), {"id": conversation_id}).first()
+        if row is None or not row.tenant_id or not row.owner_id:
+            raise RuntimeError("Queued run has no verified conversation owner.")
+        return OwnershipScope(owner_id=row.owner_id, tenant_id=row.tenant_id)
 
     def _prepare_context(self, state: MessagingState) -> dict[str, Any]:
         with self.database.session() as session:
@@ -719,7 +764,20 @@ class AgentRuntimeService:
         effective_tool_ids: list[str] = []
         active_agent_version = None
         with self.database.session() as session:
-            current_agent = session.get(Agent, agent["id"])
+            statement = select(Agent).where(Agent.id == agent["id"])
+            run_parent = session.get(Run, run_id)
+            chat_parent = session.get(HumanChatRun, run_id) if run_parent is None else None
+            if run_parent is not None:
+                scope = self._scope_for_conversation(session, run_parent.conversation_id)
+            elif chat_parent is not None:
+                scope = self._scope_for_conversation(session, chat_parent.conversation_id)
+            else:
+                scope = None
+            if scope is not None:
+                statement = statement.where(scoped_root(Agent, scope))
+            current_agent = session.scalar(statement)
+            if scope is not None and current_agent is None:
+                raise RuntimeError("The persisted run agent is outside its parent conversation owner scope.")
             if current_agent is not None:
                 active_agent_version = current_agent.version
                 current_grants = set(current_agent.tool_ids or []) if current_agent.enabled else set()
@@ -822,6 +880,9 @@ class AgentRuntimeService:
         child_id = None
         with self.database.session() as session:
             chat_run = session.get(HumanChatRun, run_id)
+            if chat_run is None:
+                return None
+            scope = self._scope_for_conversation(session, chat_run.conversation_id)
             root_task = session.scalar(select(Task).where(Task.root_run_id == run_id, Task.parent_task_id.is_(None)))
             if chat_run is None or root_task is None:
                 return None
@@ -867,10 +928,13 @@ class AgentRuntimeService:
                     targets = []
                 if not targets:
                     return None
-                local_count = session.scalar(
+                count_query = (
                     select(func.count()).select_from(Agent).join(AgentCapability, AgentCapability.agent_id == Agent.id)
                     .where(AgentCapability.capability == request.capability, Agent.enabled.is_(True), Agent.id != root_task.agent_id)
-                ) or 0
+                )
+                if scope is not None:
+                    count_query = count_query.where(scoped_root(Agent, scope))
+                local_count = session.scalar(count_query) or 0
                 if len(targets) != 1 or local_count:
                     _append_human_chat_event(session, chat_run, "handoff_rejected", {
                         "task_id": root_task.id, "capability": request.capability,
@@ -995,6 +1059,7 @@ class AgentRuntimeService:
             chat_run = session.get(HumanChatRun, run_id)
             if chat_run is None:
                 raise RuntimeError("Only a human-chat run can hand off a task.")
+            owner_scope = self._scope_for_conversation(session, chat_run.conversation_id)
             root_task = session.scalar(
                 select(Task).where(
                     Task.root_run_id == run_id,
@@ -1014,12 +1079,15 @@ class AgentRuntimeService:
                     capability=existing_child.capability or request.capability,
                     task=existing_child.objective,
                 )
-                original_recipient = session.get(Agent, existing_child.agent_id)
+                recipient_query = select(Agent).where(Agent.id == existing_child.agent_id)
+                if owner_scope is not None:
+                    recipient_query = recipient_query.where(scoped_root(Agent, owner_scope))
+                original_recipient = session.scalar(recipient_query)
                 if original_recipient is None:
                     raise RuntimeError("The persisted delegated agent no longer exists.")
                 candidates = [original_recipient]
             else:
-                candidates = session.scalars(
+                candidate_query = (
                     select(Agent)
                     .join(AgentCapability, AgentCapability.agent_id == Agent.id)
                     .where(
@@ -1028,7 +1096,10 @@ class AgentRuntimeService:
                         Agent.id != root_task.agent_id,
                     )
                     .order_by(Agent.created_at, Agent.id)
-                ).all()
+                )
+                if owner_scope is not None:
+                    candidate_query = candidate_query.where(scoped_root(Agent, owner_scope))
+                candidates = session.scalars(candidate_query).all()
 
             _append_human_chat_event(
                 session,
@@ -1038,7 +1109,7 @@ class AgentRuntimeService:
             )
 
             if not candidates:
-                disabled_count = session.scalar(
+                disabled_query = (
                     select(func.count())
                     .select_from(Agent)
                     .join(AgentCapability, AgentCapability.agent_id == Agent.id)
@@ -1047,7 +1118,10 @@ class AgentRuntimeService:
                         Agent.enabled.is_(False),
                         Agent.id != root_task.agent_id,
                     )
-                ) or 0
+                )
+                if owner_scope is not None:
+                    disabled_query = disabled_query.where(scoped_root(Agent, owner_scope))
+                disabled_count = session.scalar(disabled_query) or 0
                 failure_code = "no_enabled_match"
                 _append_human_chat_event(
                     session,
@@ -1385,7 +1459,16 @@ class AgentRuntimeService:
 
     def execute_queued_run(self, run_id: str) -> None:
         with self.database.session() as session:
-            is_room_run = session.get(RoomRun, run_id) is not None
+            parent_kind = unique_run_parent(session, run_id)
+            if parent_kind is None:
+                job = session.get(QueueJob, run_id)
+                if job is not None and job.status in {"pending", "running"}:
+                    job.status = "failed"
+                    job.last_error = "ambiguous_run_parent"
+                    job.updated_at = datetime.now(timezone.utc)
+                    session.commit()
+                return
+            is_room_run = parent_kind == "room"
         if is_room_run:
             room_runtime = getattr(self, "room_runtime", None)
             if room_runtime is None:
@@ -1430,9 +1513,14 @@ class AgentRuntimeService:
                     return
             self._mark_run_failed(run_id, exc)
 
-    def get_run(self, run_id: str) -> dict[str, Any] | None:
+    def get_run(self, run_id: str, owner_scope: OwnershipScope | None = None) -> dict[str, Any] | None:
         with self.database.session() as session:
-            run = session.get(Run, run_id)
+            if unique_run_parent(session, run_id) is None:
+                return None
+            run_query = select(Run).join(Conversation, Conversation.id == Run.conversation_id).where(Run.id == run_id)
+            if owner_scope is not None:
+                run_query = run_query.where(scoped_root(Conversation, owner_scope))
+            run = session.scalar(run_query)
             if run is not None:
                 events = session.scalars(
                     select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.sequence)
@@ -1466,10 +1554,13 @@ class AgentRuntimeService:
                     "completed_at": run.completed_at.isoformat() if run.completed_at else None,
                 }
 
-            chat_run = session.get(HumanChatRun, run_id)
+            chat_query = select(HumanChatRun).join(Conversation, Conversation.id == HumanChatRun.conversation_id).where(HumanChatRun.id == run_id)
+            if owner_scope is not None:
+                chat_query = chat_query.where(scoped_root(Conversation, owner_scope))
+            chat_run = session.scalar(chat_query)
             if chat_run is None:
                 room_runtime = getattr(self, "room_runtime", None)
-                return room_runtime.get_run(run_id) if room_runtime is not None else None
+                return room_runtime.get_run(run_id, owner_scope) if room_runtime is not None else None
             events = session.scalars(
                 select(HumanChatRunEvent)
                 .where(HumanChatRunEvent.run_id == run_id)
