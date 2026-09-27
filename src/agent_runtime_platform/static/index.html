@@ -352,6 +352,8 @@
       let providerCatalog = [];
       let toolCatalog = [];
       const toolSelectionBaseline = new Map();
+      const toolUnresolvedGrants = new Map();
+      const toolRemovedGrantIds = new Set();
       let csrfToken = "";
       let authEnabled = false;
 
@@ -905,11 +907,27 @@
         }
         const currentSet = new Set(available.map((tool) => tool.id));
         toolSelectionBaseline.set(containerId, selectedIds.filter((id) => currentSet.has(id)).sort());
-        for (const id of selectedIds.filter((value) => !currentSet.has(value))) {
-          const note = document.createElement("p");
-          note.className = "muted";
-          note.textContent = `Kayıtlı fakat katalogda artık görünmeyen araç: ${id}`;
-          container.append(note);
+        const unresolved = selectedIds.filter((id) => !currentSet.has(id));
+        toolUnresolvedGrants.set(containerId, unresolved);
+        for (const key of [...toolRemovedGrantIds]) {
+          if (key.startsWith(`${containerId}:`)) toolRemovedGrantIds.delete(key);
+        }
+        for (const id of unresolved) {
+          const row = document.createElement("div");
+          row.className = "muted";
+          const note = document.createElement("span");
+          note.textContent = `Kayıtlı fakat katalogda artık görünmeyen araç: ${id} `;
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "button secondary";
+          remove.textContent = "İzni kaldır";
+          remove.addEventListener("click", () => {
+            toolRemovedGrantIds.add(`${containerId}:${id}`);
+            remove.disabled = true;
+            remove.textContent = "Kaldırılacak";
+          });
+          row.append(note, remove);
+          container.append(row);
         }
         if (!container.childElementCount) {
           const note = document.createElement("p");
@@ -924,7 +942,12 @@
       }
 
       function toolSelectionChanged(containerId) {
-        return JSON.stringify(selectedToolIds(containerId)) !== JSON.stringify(toolSelectionBaseline.get(containerId) || []);
+        return JSON.stringify(selectedToolIds(containerId)) !== JSON.stringify(toolSelectionBaseline.get(containerId) || []) ||
+          (toolUnresolvedGrants.get(containerId) || []).some((id) => toolRemovedGrantIds.has(`${containerId}:${id}`));
+      }
+
+      function hasUnresolvedToolGrants(containerId) {
+        return (toolUnresolvedGrants.get(containerId) || []).some((id) => !toolRemovedGrantIds.has(`${containerId}:${id}`));
       }
 
       async function loadAgentConfigCatalog() {
@@ -1061,7 +1084,7 @@
         modelSelect.disabled = false;
         updateEffortOptions();
         createAgentButton.disabled = effortSelect.disabled;
-        const editingAgent = agents.find((item) => item.id === (managedAgentId || agentSelect.value));
+        const editingAgent = allAgents.find((item) => item.id === (managedAgentId || agentSelect.value));
         if (editingAgent) {
           renderEditModelOptions(editingAgent, editModelSelect.value, editEffortSelect.value || editingAgent.model_reasoning_effort);
         }
@@ -1213,6 +1236,29 @@
         const savedAgentId = preferredId || localStorage.getItem("agentRuntimeAgentId");
         if (agents.some((agent) => agent.id === savedAgentId)) agentSelect.value = savedAgentId;
         else agentSelect.selectedIndex = 0;
+        const agentFallback = Boolean(savedAgentId && savedAgentId !== agentSelect.value);
+        if (agentFallback) {
+          chatContextGeneration += 1;
+          viewGeneration += 1;
+          activeRunId = "";
+          monitoredRunId = "";
+          sendInFlight = false;
+          uncertainSubmission = false;
+          clearTimeout(conversationRetryTimer);
+          conversationRetryTimer = 0;
+          conversationId = "";
+          localStorage.removeItem("agentRuntimeConversationId");
+          chatDraft = "";
+          chatSubmissionMessage = "";
+          messageInput.value = "";
+          if (currentScreen === "chat" && viewMode === "chat") {
+            document.getElementById("chat-title").textContent = "Yeni sohbet";
+            sendButton.disabled = false;
+            messageInput.disabled = false;
+            renderMessages([]);
+            setStatus("Seçili ajan devre dışı. Yeni etkin ajan için yeni sohbet hazır.");
+          }
+        }
         localStorage.setItem("agentRuntimeAgentId", agentSelect.value);
         if (!allAgents.some((agent) => agent.id === managedAgentId)) managedAgentId = agentSelect.value;
         renderEditAgent();
@@ -1274,13 +1320,18 @@
         const provider = editProviderSelect.value;
         const enabled = document.getElementById("edit-agent-enabled").checked;
         const toolIds = selectedToolIds("edit-agent-tools");
+        const toolsChanged = toolSelectionChanged("edit-agent-tools");
+        if (toolsChanged && hasUnresolvedToolGrants("edit-agent-tools")) {
+          setAgentFormStatus("Araç izinleri değiştirilemedi. Katalogda görünmeyen kayıtlı izinleri tek tek kaldırıp yeniden kaydet.", true, formScreen);
+          return;
+        }
         if (name !== agent.name) changes.name = name;
         if (description !== (agent.description || "")) changes.description = description;
         if (instructions !== agent.instructions) changes.instructions = instructions;
         if (JSON.stringify(capabilities) !== JSON.stringify(agent.capabilities || [])) changes.capabilities = capabilities;
         if (enabled !== Boolean(agent.enabled)) changes.enabled = enabled;
         if (provider !== agent.model_provider) changes.model_provider = provider;
-        if (toolSelectionChanged("edit-agent-tools")) changes.tool_ids = toolIds;
+        if (toolsChanged) changes.tool_ids = toolIds;
         if (provider === "codex") {
           const modelName = editModelSelect.value;
           const effort = editEffortSelect.value;

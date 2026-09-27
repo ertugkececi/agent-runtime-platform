@@ -41,8 +41,23 @@ test("disabled creation stays on the creation screen and provider switching upda
   assert.match(html, /updateEditEffortOptions\(\{ \.\.\.agent, model_provider: editProviderSelect\.value \}, effort\)/);
 });
 
-test("a temporarily unavailable tool catalog cannot clear existing grants on unrelated saves", () => {
+test("disabled managed Codex agents keep their model controls enabled after catalog refresh", () => {
+  assert.match(html, /const editingAgent = allAgents\.find\(\(item\) => item\.id === \(managedAgentId \|\| agentSelect\.value\)\)/);
+  assert.doesNotMatch(html, /const editingAgent = agents\.find/);
+});
+
+test("stale tool grants need explicit removal before tool edits and unrelated saves preserve them", () => {
   assert.match(html, /toolSelectionBaseline\.set\(containerId, selectedIds\.filter\(\(id\) => currentSet\.has\(id\)\)\.sort\(\)\)/);
-  assert.match(html, /function toolSelectionChanged\(containerId\)/);
-  assert.match(html, /if \(toolSelectionChanged\("edit-agent-tools"\)\) changes\.tool_ids = toolIds/);
+  assert.match(html, /remove\.textContent = "İzni kaldır"/);
+  assert.match(html, /function hasUnresolvedToolGrants\(containerId\)/);
+  assert.match(html, /if \(toolsChanged && hasUnresolvedToolGrants\("edit-agent-tools"\)\)/);
+  assert.match(html, /if \(toolsChanged\) changes\.tool_ids = toolIds/);
+  assert.match(html, /Katalogda görünmeyen kayıtlı izinleri tek tek kaldırıp yeniden kaydet/);
+});
+
+test("falling back from a disabled chat agent clears its conversation and invalidates pending chat work", () => {
+  assert.match(html, /const agentFallback = Boolean\(savedAgentId && savedAgentId !== agentSelect\.value\)/);
+  assert.match(html, /if \(agentFallback\) \{[\s\S]*?chatContextGeneration \+= 1;[\s\S]*?viewGeneration \+= 1/);
+  assert.match(html, /if \(agentFallback\) \{[\s\S]*?conversationId = "";[\s\S]*?localStorage\.removeItem\("agentRuntimeConversationId"\)/);
+  assert.match(html, /Seçili ajan devre dışı\. Yeni etkin ajan için yeni sohbet hazır\./);
 });
