@@ -16,6 +16,7 @@ from sqlalchemy.engine import make_url
 from agent_runtime_platform.api import create_app
 from agent_runtime_platform.models import HumanChatRun, QueueJob, RoomRun, RoomRunEvent, RoomRunTurn, Run, Task
 from agent_runtime_platform.runtime import _append_event, _append_human_chat_event
+from agent_runtime_platform.resource_auth import unique_run_parent
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -60,9 +61,15 @@ def recover_interrupted_jobs(runtime) -> None:
     with runtime.database.session() as session:
         jobs = session.scalars(select(QueueJob).where(QueueJob.status == "running")).all()
         for job in jobs:
-            run = session.get(Run, job.run_id)
-            chat_run = session.get(HumanChatRun, job.run_id)
-            room_run = session.get(RoomRun, job.run_id)
+            parent_kind = unique_run_parent(session, job.run_id)
+            if parent_kind is None:
+                job.status = "failed"
+                job.last_error = "ambiguous_run_parent"
+                job.updated_at = datetime.now(timezone.utc)
+                continue
+            run = session.get(Run, job.run_id) if parent_kind == "run" else None
+            chat_run = session.get(HumanChatRun, job.run_id) if parent_kind == "human_chat" else None
+            room_run = session.get(RoomRun, job.run_id) if parent_kind == "room" else None
             if job.attempts >= job.max_attempts:
                 job.status = "failed"
                 job.last_error = "worker_interrupted"
@@ -136,9 +143,16 @@ def claim_one(runtime) -> str | None:
             session.rollback()
             return None
         job = session.get(QueueJob, job_id)
-        run = session.get(Run, job_id)
-        chat_run = session.get(HumanChatRun, job_id)
-        room_run = session.get(RoomRun, job_id)
+        parent_kind = unique_run_parent(session, job_id)
+        if parent_kind is None:
+            job.status = "failed"
+            job.last_error = "ambiguous_run_parent"
+            job.updated_at = datetime.now(timezone.utc)
+            session.commit()
+            return None
+        run = session.get(Run, job_id) if parent_kind == "run" else None
+        chat_run = session.get(HumanChatRun, job_id) if parent_kind == "human_chat" else None
+        room_run = session.get(RoomRun, job_id) if parent_kind == "room" else None
         if run is not None and run.status == "queued":
             run.status = "running"
             _append_event(session, run, "run_started" if job.attempts == 1 else "worker_attempt_started", {"attempt": job.attempts})

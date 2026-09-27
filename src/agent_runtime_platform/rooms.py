@@ -12,6 +12,7 @@ from agent_runtime_platform.models import (
     new_id,
 )
 from agent_runtime_platform.providers import HandoffRequest, ProviderError, ProviderRegistry
+from agent_runtime_platform.resource_auth import OwnershipScope, scoped_root, unique_run_parent
 from agent_runtime_platform.runtime import (
     AgentDisabledError, AgentNotFoundError, InvalidMessageError,
     _agent_snapshot, _public_snapshot,
@@ -33,7 +34,7 @@ class RoomRuntimeService:
         self.database = database
         self.providers = providers
 
-    def create_room(self, name: str, participant_agent_ids: list[str], moderator_agent_id: str) -> dict[str, Any]:
+    def create_room(self, name: str, participant_agent_ids: list[str], moderator_agent_id: str, owner_scope: OwnershipScope | None = None) -> dict[str, Any]:
         if not 2 <= len(participant_agent_ids) <= 5:
             raise InvalidMessageError("A room must have between 2 and 5 participants.")
         if len(set(participant_agent_ids)) != len(participant_agent_ids):
@@ -43,7 +44,10 @@ class RoomRuntimeService:
         with self.database.session() as session:
             agents: list[Agent] = []
             for agent_id in participant_agent_ids:
-                agent = session.get(Agent, agent_id)
+                agent_query = select(Agent).where(Agent.id == agent_id)
+                if owner_scope is not None:
+                    agent_query = agent_query.where(scoped_root(Agent, owner_scope))
+                agent = session.scalar(agent_query)
                 if agent is None:
                     raise AgentNotFoundError(agent_id)
                 if not agent.enabled:
@@ -59,11 +63,14 @@ class RoomRuntimeService:
                     config_snapshot=_agent_snapshot(agent),
                 ))
             session.commit()
-            return self.get_room(room.id) or {}
+            return self.get_room(room.id, owner_scope) or {}
 
-    def get_room(self, room_id: str) -> dict[str, Any] | None:
+    def get_room(self, room_id: str, owner_scope: OwnershipScope | None = None) -> dict[str, Any] | None:
         with self.database.session() as session:
-            room = session.get(Room, room_id)
+            room_query = select(Room).where(Room.id == room_id)
+            if owner_scope is not None:
+                room_query = room_query.where(scoped_root(Room, owner_scope))
+            room = session.scalar(room_query)
             if room is None:
                 return None
             participants = session.scalars(
@@ -80,21 +87,27 @@ class RoomRuntimeService:
                 "created_at": room.created_at.isoformat(),
             }
 
-    def list_room_runs(self, room_id: str) -> list[dict[str, Any]] | None:
+    def list_room_runs(self, room_id: str, owner_scope: OwnershipScope | None = None) -> list[dict[str, Any]] | None:
         with self.database.session() as session:
-            if session.get(Room, room_id) is None:
+            room_query = select(Room).where(Room.id == room_id)
+            if owner_scope is not None:
+                room_query = room_query.where(scoped_root(Room, owner_scope))
+            if session.scalar(room_query) is None:
                 return None
             run_ids = session.scalars(
                 select(RoomRun.id).where(RoomRun.room_id == room_id)
                 .order_by(RoomRun.created_at.desc(), RoomRun.id.desc())
             ).all()
-        results = [self.get_run(run_id) for run_id in run_ids]
+        results = [self.get_run(run_id, owner_scope) for run_id in run_ids]
         return [item for item in results if item is not None]
 
-    def enqueue_run(self, room_id: str, content: str) -> dict[str, Any]:
+    def enqueue_run(self, room_id: str, content: str, owner_scope: OwnershipScope | None = None) -> dict[str, Any]:
         run_id = new_id()
         with self.database.session() as session:
-            room = session.get(Room, room_id)
+            room_query = select(Room).where(Room.id == room_id)
+            if owner_scope is not None:
+                room_query = room_query.where(scoped_root(Room, owner_scope))
+            room = session.scalar(room_query)
             if room is None:
                 raise LookupError(room_id)
             participants = session.scalars(
@@ -105,7 +118,10 @@ class RoomRuntimeService:
                 raise InvalidMessageError("A room must have between 2 and 5 participants.")
             snapshots: list[dict[str, Any]] = []
             for participant in participants:
-                agent = session.get(Agent, participant.agent_id)
+                agent_query = select(Agent).where(Agent.id == participant.agent_id)
+                if owner_scope is not None:
+                    agent_query = agent_query.where(scoped_root(Agent, owner_scope))
+                agent = session.scalar(agent_query)
                 if agent is None:
                     raise AgentNotFoundError(participant.agent_id)
                 if not agent.enabled:
@@ -284,9 +300,14 @@ class RoomRuntimeService:
                 job.updated_at = datetime.now(timezone.utc)
                 session.commit()
 
-    def get_run(self, run_id: str) -> dict[str, Any] | None:
+    def get_run(self, run_id: str, owner_scope: OwnershipScope | None = None) -> dict[str, Any] | None:
         with self.database.session() as session:
-            run = session.get(RoomRun, run_id)
+            if unique_run_parent(session, run_id) != "room":
+                return None
+            run_query = select(RoomRun).join(Room, Room.id == RoomRun.room_id).where(RoomRun.id == run_id)
+            if owner_scope is not None:
+                run_query = run_query.where(scoped_root(Room, owner_scope))
+            run = session.scalar(run_query)
             if run is None:
                 return None
             turns = session.scalars(

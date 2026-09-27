@@ -96,6 +96,7 @@ class AgentUpdate(BaseModel):
 
 
 class RoomCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=120)
     participant_agent_ids: list[str] = Field(min_length=2, max_length=5)
     moderator_agent_id: str = Field(min_length=1)
@@ -110,6 +111,7 @@ class RoomCreate(BaseModel):
 
 
 class RoomRunCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     content: str = Field(min_length=1, max_length=20_000)
 
     @field_validator("content")
@@ -122,10 +124,12 @@ class RoomRunCreate(BaseModel):
 
 
 class ConversationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     agent_ids: list[str] = Field(min_length=2, max_length=20)
 
 
 class MessageCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     sender_agent_id: str = Field(min_length=1)
     recipient_agent_id: str | None = Field(default=None, min_length=1)
     recipient_capability: str | None = Field(default=None, min_length=1, max_length=80)
@@ -157,10 +161,12 @@ class MessageCreate(BaseModel):
 
 
 class HumanChatCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     agent_id: str = Field(min_length=1)
 
 
 class HumanChatMessageCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     content: str = Field(min_length=1, max_length=20_000)
 
     @field_validator("content")
