@@ -309,6 +309,10 @@ class ProviderRegistry:
     def supports(self, provider_name: str) -> bool:
         return provider_name in self._providers
 
+    def configured_provider_ids(self) -> list[str]:
+        """Return only supported public provider identifiers, never provider configuration."""
+        return sorted(name for name in ("codex", "openai") if name in self._providers)
+
     def generate(
         self,
         agent: dict[str, Any],

@@ -97,6 +97,7 @@ test("management selection changes the edit target without changing chat agent o
   const state = { chatAgentId: "agent-chat", conversationId: "conversation-1", managedAgentId: "" };
   const select = new Function("state", `
     const agents = [{ id: "agent-chat" }, { id: "agent-other" }];
+    const allAgents = agents;
     let managedAgentId = state.managedAgentId;
     const renderAgentCards = () => {};
     const renderEditAgent = () => {};
@@ -107,7 +108,7 @@ test("management selection changes the edit target without changing chat agent o
   assert.equal(state.managedAgentId, "agent-other");
   assert.equal(state.chatAgentId, "agent-chat");
   assert.equal(state.conversationId, "conversation-1");
-  assert.match(html, /const agent = agents\.find\(\(item\) => item\.id === \(managedAgentId \|\| agentSelect\.value\)\);/);
+  assert.match(html, /let agent = allAgents\.find\(\(item\) => item\.id === \(managedAgentId \|\| agentSelect\.value\)\);/);
 });
 
 const feedbackSource = html.match(
@@ -162,7 +163,7 @@ test("creating an agent only navigates to chat if the create form context is sti
   `)("new-agent");
   assert.equal(canNavigate, false);
   assert.match(html, /const stillOnForm = isCurrentFormContext\(formScreen, formGeneration\)/);
-  assert.match(html, /if \(stillOnForm\) \{[\s\S]*?setAppScreen\("chat"/);
+  assert.match(html, /if \(stillOnForm && agent\.enabled\) \{[\s\S]*?setAppScreen\("chat"/);
   assert.match(html, /if \(screen !== previousScreen\) screenGeneration \+= 1/);
 });
 
@@ -200,5 +201,5 @@ test("create completion preserves the existing chat if the user switches during 
     storedConversationId: "conversation-existing",
   }, "leaving during loadAgents preserves in-memory and persisted chat selection");
   assert.match(html, /await loadAgents\(\);\s*const stillOnForm = isCurrentFormContext\(formScreen, formGeneration\)/);
-  assert.match(html, /const stillOnForm = isCurrentFormContext\(formScreen, formGeneration\);\s*setAgentFormStatus[\s\S]*?if \(stillOnForm\) \{\s*conversationId = "";\s*localStorage\.removeItem\("agentRuntimeConversationId"\)/);
+  assert.match(html, /const stillOnForm = isCurrentFormContext\(formScreen, formGeneration\);\s*setAgentFormStatus[\s\S]*?if \(stillOnForm && agent\.enabled\) \{\s*conversationId = "";\s*localStorage\.removeItem\("agentRuntimeConversationId"\)/);
 });

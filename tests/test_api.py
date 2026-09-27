@@ -96,6 +96,81 @@ def create_conversation(client: TestClient, first_id: str, second_id: str) -> st
     return response.json()["id"]
 
 
+def test_agent_config_catalog_returns_safe_provider_metadata_only():
+    provider = FakeProvider()
+    app = create_app(
+        database_url="sqlite:///:memory:",
+        providers=ProviderRegistry({"openai": provider, "codex": provider}),
+    )
+    with TestClient(app) as client:
+        response = client.get("/agent-config/catalog")
+        assert response.status_code == 200
+        assert response.json() == {
+            "providers": [
+                {"id": "codex", "model_catalog_available": True},
+                {"id": "openai", "model_catalog_available": False},
+            ]
+        }
+        assert "command" not in response.text
+        assert "OPENAI_API_KEY" not in response.text
+        assert "env_vars" not in response.text
+    app.state.database.dispose()
+
+
+def test_agent_ui_fields_round_trip_and_disable_preserves_conversation_history(client_and_provider):
+    client, _provider = client_and_provider
+    first = create_agent(client, "Analyst", "model-a")
+    response = client.post(
+        "/agents",
+        json={
+            "name": "Managed helper",
+            "description": "Initial description",
+            "instructions": "Initial instructions",
+            "model_provider": "openai",
+            "model_name": "fixture-model",
+            "capabilities": ["research"],
+            "tool_ids": [],
+            "enabled": True,
+        },
+    )
+    assert response.status_code == 201, response.text
+    managed = response.json()
+    conversation_id = create_conversation(client, first["id"], managed["id"])
+    message = client.post(
+        f"/conversations/{conversation_id}/messages",
+        json={
+            "sender_agent_id": first["id"],
+            "recipient_agent_id": managed["id"],
+            "content": "Keep this conversation.",
+        },
+    )
+    assert message.status_code == 201, message.text
+    original_message_count = len(client.get(f"/conversations/{conversation_id}").json()["messages"])
+
+    update = client.patch(
+        f"/agents/{managed['id']}",
+        json={
+            "name": "Managed research helper",
+            "description": "Updated description",
+            "instructions": "Updated instructions",
+            "capabilities": ["research", "analysis"],
+            "enabled": False,
+        },
+    )
+    assert update.status_code == 200, update.text
+    assert update.json()["name"] == "Managed research helper"
+    assert update.json()["description"] == "Updated description"
+    assert update.json()["capabilities"] == ["analysis", "research"]
+    assert update.json()["enabled"] is False
+    assert len(client.get(f"/conversations/{conversation_id}").json()["messages"]) == original_message_count
+    assert managed["id"] not in [agent["id"] for agent in client.get("/agents").json() if agent["enabled"]]
+
+    reenabled = client.patch(f"/agents/{managed['id']}", json={"enabled": True})
+    assert reenabled.status_code == 200
+    assert reenabled.json()["enabled"] is True
+    assert len(client.get(f"/conversations/{conversation_id}").json()["messages"]) == original_message_count
+
+
 def test_two_registered_agents_exchange_a_persisted_message_and_trace(client_and_provider):
     client, provider = client_and_provider
     sender = create_agent(client, "Analyst", "model-a")

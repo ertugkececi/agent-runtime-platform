@@ -99,12 +99,15 @@
       .room-agent-list { display: grid; gap: 7px; max-height: 190px; overflow-y: auto; padding: 8px; border: 1px solid #dce2eb; border-radius: 9px; }
       .room-agent-option { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 500; }
       .room-agent-option input { width: auto; }
+      .agent-tool-list { display: grid; gap: 7px; max-height: 220px; overflow-y: auto; padding: 8px; border: 1px solid #dce2eb; border-radius: 9px; }
+      .agent-tool-option, .check-row { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 500; }
+      .agent-tool-option input, .check-row input { width: auto; }
       .room-controls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
       .room-controls select { flex: 1; min-width: 0; }
       .room-run { color: #718096; font-size: 12px; }
       [data-theme="dark"] .bubble-row.moderator .speaker { color: #b8c8ff; }
       [data-theme="dark"] .bubble-row.moderator .bubble { color: #f0f4ff; background: #2c3e68; border-color: #50689f; }
-      [data-theme="dark"] .room-order li, [data-theme="dark"] .room-agent-list { border-color: #45546a; }
+      [data-theme="dark"] .room-order li, [data-theme="dark"] .room-agent-list, [data-theme="dark"] .agent-tool-list { border-color: #45546a; }
       [data-theme="dark"] .room-order button { color: #e4edfa; background: #2a394d; border-color: #485a73; }
       .composer { display: flex; align-items: flex-end; gap: 10px; padding: 15px 18px 18px; border-top: 1px solid #edf0f4; }
       .composer textarea { min-height: 46px; max-height: 150px; }
@@ -211,19 +214,30 @@
     <main class="page-screen" id="agents-screen" hidden>
       <section class="panel" aria-labelledby="agents-heading">
         <h1 id="agents-heading">Ajan yönetimi</h1>
-        <p class="muted">Ajanları seç, yapılandırmalarını gözden geçir ve talimat/model ayarlarını düzenle.</p>
+        <p class="muted">Ajanları seçip tanımlarını, yeteneklerini, araç izinlerini ve kullanılabilir model ayarlarını düzenle.</p>
         <p class="muted" id="agent-edit-feedback" role="status" aria-live="polite"></p>
         <div id="agent-list" class="agent-list" aria-label="Ajan listesi"></div>
         <div id="agent-edit-slot">
         <details id="edit-agent-details" open>
           <summary>Seçili ajanı düzenle</summary>
           <form id="edit-agent-form">
-            <label for="edit-model-name">Codex modeli</label>
+            <label for="edit-agent-name">Ad</label>
+            <input id="edit-agent-name" maxlength="120" required />
+            <label for="edit-agent-description">Açıklama</label>
+            <textarea id="edit-agent-description" maxlength="500"></textarea>
+            <label for="edit-model-provider">Model sağlayıcısı</label>
+            <select id="edit-model-provider"></select>
+            <label for="edit-model-name">Model</label>
             <select id="edit-model-name" required></select>
             <label for="edit-model-effort">Düşünme eforu</label>
             <select id="edit-model-effort"></select>
             <label for="edit-agent-instructions">Talimatlar</label>
             <textarea id="edit-agent-instructions" maxlength="20000" required></textarea>
+            <label for="edit-agent-capabilities">Yetenekler (virgülle ayır)</label>
+            <input id="edit-agent-capabilities" placeholder="araştırma, yazılım" />
+            <label>Salt okunur MCP araç izinleri</label>
+            <div id="edit-agent-tools" class="agent-tool-list" role="group" aria-label="Seçili ajan için izin verilen salt okunur MCP araçları"></div>
+            <label class="check-row"><input id="edit-agent-enabled" type="checkbox" /> Etkin</label>
             <p class="muted" id="edit-agent-hint">Değişiklikler sonraki yanıtta geçerli olur.</p>
             <button class="button full" id="edit-agent-button" type="submit">Değişiklikleri kaydet</button>
             <button class="button secondary full" id="reset-agent-button" type="button">Değişiklikleri geri al</button>
@@ -243,7 +257,11 @@
           <form id="create-agent-form">
             <label for="agent-name">Ad</label>
             <input id="agent-name" name="name" value="Kişisel Asistan" maxlength="120" required />
-            <label for="model-name">Codex modeli</label>
+            <label for="agent-description">Açıklama</label>
+            <textarea id="agent-description" name="description" maxlength="500"></textarea>
+            <label for="model-provider">Model sağlayıcısı</label>
+            <select id="model-provider" name="model_provider" required></select>
+            <label for="model-name">Model</label>
             <select id="model-name" name="model_name" required disabled><option value="">Modeller yükleniyor…</option></select>
             <label for="model-effort">Düşünme eforu</label>
             <select id="model-effort" name="model_reasoning_effort" required disabled></select>
@@ -251,6 +269,10 @@
             <textarea id="agent-instructions" name="instructions" maxlength="20000" required>Yardımcı bir asistansın. Kullanıcının diliyle yanıt ver.</textarea>
             <label for="agent-capabilities">Yetenekler (virgülle ayır)</label>
             <input id="agent-capabilities" name="capabilities" placeholder="araştırma, yazılım" />
+            <label>Salt okunur MCP araç izinleri</label>
+            <div id="agent-tools" class="agent-tool-list" role="group" aria-label="Ajan için izin verilen salt okunur MCP araçları"></div>
+            <label class="check-row"><input id="agent-enabled" name="enabled" type="checkbox" checked /> Etkin</label>
+            <p class="muted">Yalnızca sunucuda yönetici tarafından onaylanan, salt okunur araçlar listelenir. MCP komutları ve kimlik bilgileri burada gösterilmez.</p>
             <button class="button full" id="create-agent-button" type="submit" disabled>Ajanı oluştur</button>
           </form>
         </details>
@@ -272,6 +294,7 @@
       const editModelSelect = document.getElementById("edit-model-name");
       const editEffortSelect = document.getElementById("edit-model-effort");
       const editInstructions = document.getElementById("edit-agent-instructions");
+      const editProviderSelect = document.getElementById("edit-model-provider");
       const editAgentButton = document.getElementById("edit-agent-button");
       const themeToggle = document.getElementById("theme-toggle");
       const roomTools = document.getElementById("room-tools");
@@ -324,7 +347,11 @@
       let chatSubmissionMessage = "";
       let conversationRetryTimer = 0;
       let agents = [];
+      let allAgents = [];
       let codexModels = [];
+      let providerCatalog = [];
+      let toolCatalog = [];
+      const toolSelectionBaseline = new Map();
       let csrfToken = "";
       let authEnabled = false;
 
@@ -814,7 +841,7 @@
 
       const effortLabels = { low: "Düşük", medium: "Orta", high: "Yüksek", xhigh: "Çok yüksek", max: "Maksimum", ultra: "Ultra" };
       function updateEffortOptions() {
-        const model = codexModels.find((item) => item.id === modelSelect.value);
+        const model = document.getElementById("model-provider").value === "codex" ? codexModels.find((item) => item.id === modelSelect.value) : null;
         effortSelect.replaceChildren();
         if (!model) {
           effortSelect.disabled = true;
@@ -832,12 +859,85 @@
         createAgentButton.disabled = effortSelect.disabled;
       }
       modelSelect.addEventListener("change", updateEffortOptions);
+      document.getElementById("model-provider").addEventListener("change", () => {
+        if (document.getElementById("model-provider").value !== "codex") return;
+        renderToolChoices("agent-tools", selectedToolIds("agent-tools"), "codex");
+        updateEffortOptions();
+      });
 
-      function addSelectOption(select, value, label) {
+      function addSelectOption(select, value, label, disabled = false) {
         const option = document.createElement("option");
         option.value = value;
         option.textContent = label;
+        option.disabled = disabled;
         select.append(option);
+      }
+
+      function fillProviderSelect(select, currentProvider = "codex") {
+        select.replaceChildren();
+        for (const provider of providerCatalog) {
+          const canChoose = provider.model_catalog_available;
+          addSelectOption(select, provider.id,
+            canChoose ? (provider.id === "codex" ? "Codex" : provider.id) : `${provider.id} (model kataloğu yok)`,
+            !canChoose && provider.id !== currentProvider);
+        }
+        if (!providerCatalog.some((provider) => provider.id === currentProvider)) {
+          addSelectOption(select, currentProvider, `${currentProvider} (kayıtlı sağlayıcı)`, true);
+        }
+        select.value = currentProvider;
+      }
+
+      function renderToolChoices(containerId, selectedIds, provider) {
+        const container = document.getElementById(containerId);
+        container.replaceChildren();
+        const available = provider === "codex" ? toolCatalog.filter((tool) => tool.trusted_read_only) : [];
+        for (const tool of available) {
+          const label = document.createElement("label");
+          label.className = "agent-tool-option";
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.value = tool.id;
+          checkbox.checked = selectedIds.includes(tool.id);
+          const description = document.createElement("span");
+          description.textContent = `${tool.id}${tool.description ? ` · ${tool.description}` : ""}`;
+          label.append(checkbox, description);
+          container.append(label);
+        }
+        const currentSet = new Set(available.map((tool) => tool.id));
+        toolSelectionBaseline.set(containerId, selectedIds.filter((id) => currentSet.has(id)).sort());
+        for (const id of selectedIds.filter((value) => !currentSet.has(value))) {
+          const note = document.createElement("p");
+          note.className = "muted";
+          note.textContent = `Kayıtlı fakat katalogda artık görünmeyen araç: ${id}`;
+          container.append(note);
+        }
+        if (!container.childElementCount) {
+          const note = document.createElement("p");
+          note.className = "muted";
+          note.textContent = provider === "codex" ? "Yönetici tarafından onaylanmış salt okunur araç yok." : "MCP araçları yalnızca Codex sağlayıcısıyla kullanılabilir.";
+          container.append(note);
+        }
+      }
+
+      function selectedToolIds(containerId) {
+        return [...document.querySelectorAll(`#${containerId} input[type="checkbox"]:checked`)].map((item) => item.value).sort();
+      }
+
+      function toolSelectionChanged(containerId) {
+        return JSON.stringify(selectedToolIds(containerId)) !== JSON.stringify(toolSelectionBaseline.get(containerId) || []);
+      }
+
+      async function loadAgentConfigCatalog() {
+        const [catalogResult, toolsResult] = await Promise.allSettled([
+          request("/agent-config/catalog"),
+          request("/mcp/tools"),
+        ]);
+        if (catalogResult.status !== "fulfilled") throw catalogResult.reason;
+        providerCatalog = Array.isArray(catalogResult.value.providers) ? catalogResult.value.providers : [];
+        toolCatalog = toolsResult.status === "fulfilled" && Array.isArray(toolsResult.value)
+          ? toolsResult.value : [];
+        fillProviderSelect(document.getElementById("model-provider"), "codex");
+        renderToolChoices("agent-tools", [], "codex");
       }
 
       function updateEditEffortOptions(agent, selectedEffort) {
@@ -867,13 +967,13 @@
         editModelSelect.disabled = agent.model_provider !== "codex" || !codexModels.length;
         updateEditEffortOptions(agent, selectedEffort);
         document.getElementById("edit-agent-hint").textContent = agent.model_provider !== "codex"
-          ? "Bu ajanda yalnızca talimatlar düzenlenebilir."
+          ? "Bu sağlayıcı için model kataloğu yok; diğer ajan alanları düzenlenebilir. Codex'e geçersen katalogdaki modelleri seçebilirsin."
           : "Değişiklikler sonraki yanıtta geçerli olur.";
       }
 
       function renderAgentCards() {
         agentList.replaceChildren();
-        for (const agent of agents) {
+        for (const agent of allAgents) {
           const button = document.createElement("button");
           button.type = "button";
           button.className = "agent-card";
@@ -881,32 +981,32 @@
           const name = document.createElement("span");
           name.textContent = agent.name;
           const details = document.createElement("small");
-          details.textContent = `${agent.model_provider} · ${agent.model_name}${agent.capabilities?.length ? ` · ${agent.capabilities.join(", ")}` : ""}`;
+          details.textContent = `${agent.enabled ? "Etkin" : "Devre dışı"} · ${agent.model_provider} · ${agent.model_name}${agent.capabilities?.length ? ` · ${agent.capabilities.join(", ")}` : ""}`;
           name.append(details);
           button.append(name);
           button.addEventListener("click", () => selectManagedAgent(agent.id));
           agentList.append(button);
         }
-        if (!agents.length) {
+        if (!allAgents.length) {
           const empty = document.createElement("p");
           empty.className = "muted";
-          empty.textContent = "Henüz etkin ajan yok. Yeni ajan ekranından bir ajan oluştur.";
+          empty.textContent = "Henüz ajan yok. Yeni ajan ekranından bir ajan oluştur.";
           agentList.append(empty);
         }
       }
 
       function selectManagedAgent(agentId) {
-        if (!agents.some((agent) => agent.id === agentId)) return;
+        if (!allAgents.some((agent) => agent.id === agentId)) return;
         managedAgentId = agentId;
         renderAgentCards();
         renderEditAgent();
       }
 
       function renderEditAgent() {
-        let agent = agents.find((item) => item.id === (managedAgentId || agentSelect.value));
-        if (!agent && agents.length) {
-          managedAgentId = agents.some((item) => item.id === agentSelect.value) ? agentSelect.value : agents[0].id;
-          agent = agents.find((item) => item.id === managedAgentId);
+        let agent = allAgents.find((item) => item.id === (managedAgentId || agentSelect.value));
+        if (!agent && allAgents.length) {
+          managedAgentId = allAgents.some((item) => item.id === agentSelect.value) ? agentSelect.value : allAgents[0].id;
+          agent = allAgents.find((item) => item.id === managedAgentId);
         }
         renderAgentCards();
         editAgentDetails.hidden = !agent;
@@ -914,17 +1014,32 @@
           editAgentDetails.open = false;
           return;
         }
+        document.getElementById("edit-agent-name").value = agent.name;
+        document.getElementById("edit-agent-description").value = agent.description || "";
         editInstructions.value = agent.instructions;
+        document.getElementById("edit-agent-capabilities").value = (agent.capabilities || []).join(", ");
+        document.getElementById("edit-agent-enabled").checked = Boolean(agent.enabled);
+        fillProviderSelect(editProviderSelect, agent.model_provider);
+        renderToolChoices("edit-agent-tools", agent.tool_ids || [], agent.model_provider);
         renderEditModelOptions(agent);
       }
 
+      editProviderSelect.addEventListener("change", () => {
+        const agent = allAgents.find((item) => item.id === managedAgentId);
+        if (!agent) return;
+        const provider = editProviderSelect.value;
+        renderToolChoices("edit-agent-tools", provider === agent.model_provider ? (agent.tool_ids || []) : [], provider);
+        const defaultModel = provider === "codex" ? codexModels.find((item) => item.id === agent.model_name) || codexModels[0] : null;
+        renderEditModelOptions({ ...agent, model_provider: provider }, defaultModel?.id || agent.model_name, provider === agent.model_provider ? agent.model_reasoning_effort : defaultModel?.default_effort || null);
+      });
+
       editModelSelect.addEventListener("change", () => {
-        const agent = agents.find((item) => item.id === (managedAgentId || agentSelect.value));
+        const agent = allAgents.find((item) => item.id === managedAgentId);
         const model = codexModels.find((item) => item.id === editModelSelect.value);
         if (agent && model) {
-          const effort = model.id === agent.model_name
+          const effort = editProviderSelect.value === agent.model_provider && model.id === agent.model_name
             ? agent.model_reasoning_effort : model.default_effort || model.efforts[0] || null;
-          updateEditEffortOptions(agent, effort);
+          updateEditEffortOptions({ ...agent, model_provider: editProviderSelect.value }, effort);
         }
       });
       document.getElementById("reset-agent-button").addEventListener("click", renderEditAgent);
@@ -933,6 +1048,7 @@
         const models = await request("/codex/models");
         if (!Array.isArray(models) || !models.length) throw new Error("Seçilebilir Codex modeli bulunamadı.");
         codexModels = models;
+        fillProviderSelect(document.getElementById("model-provider"), "codex");
         modelSelect.replaceChildren();
         for (const model of models) {
           const option = document.createElement("option");
@@ -1074,8 +1190,9 @@
       }
 
       async function loadAgents(preferredId = "") {
-        const allAgents = await request("/agents");
-        agents = allAgents.filter((agent) => agent.enabled);
+        const fetchedAgents = await request("/agents");
+        allAgents = fetchedAgents;
+        agents = fetchedAgents.filter((agent) => agent.enabled);
         renderRoomAgents();
         renderRoomOptions();
         agentSelect.replaceChildren();
@@ -1097,7 +1214,7 @@
         if (agents.some((agent) => agent.id === savedAgentId)) agentSelect.value = savedAgentId;
         else agentSelect.selectedIndex = 0;
         localStorage.setItem("agentRuntimeAgentId", agentSelect.value);
-        if (!agents.some((agent) => agent.id === managedAgentId)) managedAgentId = agentSelect.value;
+        if (!allAgents.some((agent) => agent.id === managedAgentId)) managedAgentId = agentSelect.value;
         renderEditAgent();
         await loadConversation();
       }
@@ -1147,20 +1264,32 @@
       document.getElementById("edit-agent-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const formScreen = currentScreen;
-        const agent = agents.find((item) => item.id === (managedAgentId || agentSelect.value));
+        const agent = allAgents.find((item) => item.id === managedAgentId);
         if (!agent) return;
         const changes = {};
+        const name = document.getElementById("edit-agent-name").value.trim();
+        const description = document.getElementById("edit-agent-description").value.trim();
         const instructions = editInstructions.value.trim();
+        const capabilities = document.getElementById("edit-agent-capabilities").value.split(",").map((value) => value.trim()).filter(Boolean);
+        const provider = editProviderSelect.value;
+        const enabled = document.getElementById("edit-agent-enabled").checked;
+        const toolIds = selectedToolIds("edit-agent-tools");
+        if (name !== agent.name) changes.name = name;
+        if (description !== (agent.description || "")) changes.description = description;
         if (instructions !== agent.instructions) changes.instructions = instructions;
-        if (agent.model_provider === "codex") {
+        if (JSON.stringify(capabilities) !== JSON.stringify(agent.capabilities || [])) changes.capabilities = capabilities;
+        if (enabled !== Boolean(agent.enabled)) changes.enabled = enabled;
+        if (provider !== agent.model_provider) changes.model_provider = provider;
+        if (toolSelectionChanged("edit-agent-tools")) changes.tool_ids = toolIds;
+        if (provider === "codex") {
           const modelName = editModelSelect.value;
           const effort = editEffortSelect.value;
           if (modelName !== agent.model_name && !effort) {
             setAgentFormStatus("Yeni model için düşünme eforu seç.", true, formScreen);
             return;
           }
-          if (modelName !== agent.model_name) changes.model_name = modelName;
-          if (effort && effort !== agent.model_reasoning_effort) changes.model_reasoning_effort = effort;
+          if (modelName && modelName !== agent.model_name) changes.model_name = modelName;
+          if (effort !== (agent.model_reasoning_effort || "")) changes.model_reasoning_effort = effort || null;
         }
         if (!Object.keys(changes).length) {
           setAgentFormStatus("Değişiklik yapılmadı.", false, formScreen);
@@ -1173,7 +1302,8 @@
             method: "PATCH",
             body: JSON.stringify(changes),
           });
-          agents = agents.map((item) => item.id === updated.id ? updated : item);
+          allAgents = allAgents.map((item) => item.id === updated.id ? updated : item);
+          await loadAgents(agentSelect.value);
           renderEditAgent();
           setAgentFormStatus("Ajan ayarları kaydedildi. Sonraki yanıt yeni ayarları kullanacak.", false, formScreen);
         } catch (error) {
@@ -1197,17 +1327,20 @@
             method: "POST",
             body: JSON.stringify({
               name: document.getElementById("agent-name").value,
+              description: document.getElementById("agent-description").value,
               instructions: document.getElementById("agent-instructions").value,
-              model_provider: "codex",
+              model_provider: document.getElementById("model-provider").value,
               model_name: document.getElementById("model-name").value,
               model_reasoning_effort: document.getElementById("model-effort").value,
               capabilities,
+              tool_ids: selectedToolIds("agent-tools"),
+              enabled: document.getElementById("agent-enabled").checked,
             }),
           });
           await loadAgents();
           const stillOnForm = isCurrentFormContext(formScreen, formGeneration);
           setAgentFormStatus("Ajan oluşturuldu. Mesajını yazabilirsin.", false, formScreen);
-          if (stillOnForm) {
+          if (stillOnForm && agent.enabled) {
             conversationId = "";
             localStorage.removeItem("agentRuntimeConversationId");
             agentSelect.value = agent.id;
@@ -1215,7 +1348,11 @@
             renderEditAgent();
             setAppScreen("chat", { writeHistory: true });
             document.getElementById("agent-capabilities").value = "";
+            document.getElementById("agent-description").value = "";
+            document.getElementById("agent-tools").querySelectorAll("input").forEach((item) => { item.checked = false; });
             messageInput.focus();
+          } else if (stillOnForm) {
+            setAgentFormStatus("Ajan oluşturuldu fakat devre dışı. Ajanlar ekranından istediğinde etkinleştirebilirsin.", false, formScreen);
           }
         } catch (error) {
           setAgentFormStatus(error.message, true, formScreen);
@@ -1373,7 +1510,7 @@
 
       initializeAuth().then((allowed) => {
         if (!allowed) return;
-        return loadAgents().then(loadCodexModels).then(() => {
+        return loadAgentConfigCatalog().then(() => loadAgents()).then(loadCodexModels).then(() => {
           const initialScreen = screenFromHash()
             || (!agents.length ? "new-agent" : localStorage.getItem("agentRuntimeViewMode") === "room" ? "rooms" : "chat");
           setAppScreen(initialScreen);
