@@ -109,6 +109,25 @@ def test_dry_run_is_read_only_and_reports_counts_checksum(tmp_path):
     db.dispose()
 
 
+def test_reserved_rebuild_table_collision_fails_before_backup_or_mutation(tmp_path):
+    db = _database(tmp_path / "collision.db")
+    sentinel_name = "__tenant_v1_agents"
+    with db.engine.begin() as connection:
+        connection.execute(text(f'CREATE TABLE "{sentinel_name}" (payload TEXT NOT NULL)'))
+        connection.execute(text(f'INSERT INTO "{sentinel_name}" VALUES (:value)'), {"value": "keep-me"})
+    before = snapshot(db.engine)
+    backup = tmp_path / "must-not-exist.db"
+
+    with pytest.raises(MigrationError, match="Reserved SQLite rebuild name"):
+        _apply(db, backup)
+
+    assert not backup.exists()
+    assert snapshot(db.engine) == before
+    with db.engine.connect() as connection:
+        assert connection.execute(text(f'SELECT payload FROM "{sentinel_name}"')).scalar_one() == "keep-me"
+    db.dispose()
+
+
 def test_apply_backfills_all_parent_families_backup_restore_and_is_idempotent(tmp_path):
     db = _database(tmp_path / "source.db")
     backup_path = tmp_path / "backup.db"

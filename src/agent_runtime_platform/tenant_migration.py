@@ -293,7 +293,10 @@ def _rebuild_sqlite_root(connection, table: str, tenant_id: str, owner_id: str) 
         "PRIMARY KEY (" + ", ".join(f'"{name}"' for name in pk) + ")",
     ])
     temporary = f"__tenant_v1_{table}"
-    connection.execute(text(f'DROP TABLE IF EXISTS "{temporary}"'))
+    if connection.execute(text(
+        "SELECT 1 FROM sqlite_master WHERE name=:name LIMIT 1"
+    ), {"name": temporary}).first():
+        raise MigrationError(f"Reserved SQLite rebuild name {temporary} already exists; refusing to overwrite it.")
     connection.execute(text(f'CREATE TABLE "{temporary}" (' + ", ".join(definitions) + ")"))
     names = [c["name"] for c in columns]
     quoted = ", ".join(f'"{name}"' for name in names)
@@ -306,6 +309,17 @@ def _rebuild_sqlite_root(connection, table: str, tenant_id: str, owner_id: str) 
     for statement in indexes:
         connection.exec_driver_sql(statement)
     connection.execute(text(f'CREATE INDEX IF NOT EXISTS "ix_{table}_tenant_owner" ON "{table}" (tenant_id, owner_id)'))
+
+
+def _ensure_no_rebuild_name_collisions(connection) -> None:
+    for table in ROOT_TABLES:
+        temporary = f"__tenant_v1_{table}"
+        if connection.execute(text(
+            "SELECT type FROM sqlite_master WHERE name=:name LIMIT 1"
+        ), {"name": temporary}).first():
+            raise MigrationError(
+                f"Reserved SQLite rebuild name {temporary} already exists; refusing to migrate."
+            )
 
 
 def _validate_queue_graph(connection, ownership: bool) -> None:
@@ -406,6 +420,8 @@ def migrate(engine: Engine, issuer: str, subject: str, tenant_id: str, backup_pa
         raise MigrationError(f"Unsupported database dialect: {dialect}")
     if backup_path is None:
         raise MigrationError("A consistent backup path is mandatory for every apply.")
+    with engine.connect() as connection:
+        _ensure_no_rebuild_name_collisions(connection)
     _ensure_unambiguous_legacy_graph(engine)
     with engine.connect() as connection:
         _validate_queue_graph(connection, ownership=False)

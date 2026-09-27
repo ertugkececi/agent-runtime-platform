@@ -289,7 +289,7 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 ## Sonraki aşamalar
 
 1. Auth/principal dilimi (#32, PR #33): varsayılan kapalı OIDC PKCE public-client login, browser-bound state, sabit tek legacy `iss/sub`, server session/CSRF kapısı. Bu, çok kullanıcılı erişim değildir ve tenant/resource izolasyonu içermez.
-2. Tenant migration (#34): sürümlü offline backfill aracı ve tek legacy owner yazma koruması PR #34 ile hazırlanıyor; canlı owner eşlemesi henüz doğrulanmadı. Kaynak authorization sonraki ayrı güvenlik dilimidir.
+2. Tenant migration (#34): sürümlü offline backfill aracı ve tek legacy owner yazma koruması PR #35 ile hazırlanıyor; canlı owner eşlemesi henüz doğrulanmadı. Kaynak authorization sonraki ayrı güvenlik dilimidir.
 3. Kaynak yetkilendirme ve tenant-scope route matrisini tamamla; bu kontroller bitmeden gelen A2A'yı ve genel internet erişimini etkinleştirme.
 4. Dağıtık kuyruk kararını yalnızca ölçümler veya açık bir çok-host/yüksek erişilebilirlik gereksinimi mevcut tasarımı yetersiz kıldığında yeniden değerlendir: [karar ve ölçüm kapısı](docs/queue-scaling-decision.md).
 5. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
