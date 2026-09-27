@@ -86,3 +86,52 @@ test("refresh and browser history use explicit hash routes", () => {
   assert.match(html, /localStorage\.getItem\("agentRuntimeConversationId"\)/);
   assert.match(html, /localStorage\.getItem\("agentRuntimeRoomId"\)/);
 });
+
+const managedSelectionSource = html.match(
+  /function selectManagedAgent\(agentId\) \{[\s\S]*?\n      \}/,
+)?.[0];
+assert.ok(managedSelectionSource, "agent management selection helper is present");
+
+test("management selection changes the edit target without changing chat agent or conversation", () => {
+  const state = { chatAgentId: "agent-chat", conversationId: "conversation-1", managedAgentId: "" };
+  const select = new Function("state", `
+    const agents = [{ id: "agent-chat" }, { id: "agent-other" }];
+    let managedAgentId = state.managedAgentId;
+    const renderAgentCards = () => {};
+    const renderEditAgent = () => {};
+    ${managedSelectionSource}
+    return (id) => { selectManagedAgent(id); state.managedAgentId = managedAgentId; };
+  `)(state);
+  select("agent-other");
+  assert.equal(state.managedAgentId, "agent-other");
+  assert.equal(state.chatAgentId, "agent-chat");
+  assert.equal(state.conversationId, "conversation-1");
+  assert.match(html, /const agent = agents\.find\(\(item\) => item\.id === \(managedAgentId \|\| agentSelect\.value\)\);/);
+});
+
+const feedbackSource = html.match(
+  /function setAgentFormStatus\(message, isError = false\) \{[\s\S]*?\n      \}/,
+)?.[0];
+assert.ok(feedbackSource, "agent form feedback helper is present");
+
+test("create and edit feedback is written into the currently visible agent screen", () => {
+  for (const [screen, expectedId] of [["agents", "agent-edit-feedback"], ["new-agent", "agent-create-feedback"]]) {
+    const feedback = { textContent: "", errors: [], classList: { toggle: (name, value) => feedback.errors.push([name, value]) } };
+    const status = { textContent: "", classList: { toggle() {} } };
+    const run = new Function("screen", "feedback", "status", `
+      const currentScreen = screen;
+      const agentEditFeedback = screen === "agents" ? feedback : null;
+      const agentCreateFeedback = screen === "new-agent" ? feedback : null;
+      const setStatus = (message, isError) => { status.textContent = message; };
+      ${feedbackSource}
+      return setAgentFormStatus;
+    `)(screen, feedback, status);
+    run("Kaydetme başarısız", true);
+    assert.equal(feedback.textContent, "Kaydetme başarısız");
+    assert.equal(status.textContent, "Kaydetme başarısız");
+    assert.deepEqual(feedback.errors.at(-1), ["error", true]);
+    assert.ok(html.includes(`id="${expectedId}"`));
+  }
+  assert.match(html, /setAgentFormStatus\("Ajan oluşturuluyor…"\)/);
+  assert.match(html, /setAgentFormStatus\("Ajan ayarları kaydediliyor…"\)/);
+});
