@@ -276,7 +276,7 @@ Bu ilk dilim mevcut kayıtları bir kullanıcıya migrate etmez ve endpoint'lere
 | Kalıcı arka plan kuyruğu | Yeni async API uçları ve ayrı tek sunucu işçisi kullanılabilir; sınırlı yeniden deneme ve başlangıç toparlaması uygulanır. |
 | Grup odası | 2–5 kayıtlı ajan açık sırayla bir tur katkı verir; seçilen moderatör katkılardan tek bir son yanıt üretir. Kuyruk ve çalışma izi kalıcıdır. |
 | Görev devri | İnsan-ajan sohbetinde en fazla bir alt görev tek yerel veya güvenilir A2A ajanına devredilir; üst/alt görev ilişkisi, hedef anlık görüntüsü, uzak kimlik/durum, sonuç ve olay izi saklanır. |
-| Auth/principal | Varsayılan kapalı, tek sabit OIDC legacy kimliğine sahip server session + CSRF kapısı; tenant/owner authorization yok. |
+| Auth/principal | Varsayılan kapalı, tek sabit OIDC legacy kimliğine sahip server session + CSRF kapısı; tenant migration #34 ayrı offline araçla hazırlanıyor, kaynak authorization yok. |
 
 ### Giden A2A devri
 
@@ -289,9 +289,10 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 ## Sonraki aşamalar
 
 1. Auth/principal dilimi (#32, PR #33): varsayılan kapalı OIDC PKCE public-client login, browser-bound state, sabit tek legacy `iss/sub`, server session/CSRF kapısı. Bu, çok kullanıcılı erişim değildir ve tenant/resource izolasyonu içermez.
-2. Tenant migration ve owner bazlı kaynak yetkilendirmeyi ayrı güvenlik dilimleri olarak tamamla; bu kontroller bitmeden gelen A2A'yı ve genel internet erişimini etkinleştirme.
-3. Dağıtık kuyruk kararını yalnızca ölçümler veya açık bir çok-host/yüksek erişilebilirlik gereksinimi mevcut tasarımı yetersiz kıldığında yeniden değerlendir: [karar ve ölçüm kapısı](docs/queue-scaling-decision.md).
-4. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
+2. Tenant migration (#34): sürümlü offline backfill aracı ve tek legacy owner yazma koruması PR #35 ile hazırlanıyor; canlı owner eşlemesi henüz doğrulanmadı. Kaynak authorization sonraki ayrı güvenlik dilimidir.
+3. Kaynak yetkilendirme ve tenant-scope route matrisini tamamla; bu kontroller bitmeden gelen A2A'yı ve genel internet erişimini etkinleştirme.
+4. Dağıtık kuyruk kararını yalnızca ölçümler veya açık bir çok-host/yüksek erişilebilirlik gereksinimi mevcut tasarımı yetersiz kıldığında yeniden değerlendir: [karar ve ölçüm kapısı](docs/queue-scaling-decision.md).
+5. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
 
 ## Teknoloji yönü
 
@@ -299,4 +300,4 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olur. Yerel tek kullanıcılı sohbet arayüzü ve tek sunuculu kalıcı görev kuyruğu kullanılabilir; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir.
 
-Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve oda oluşturma/geçmiş/çalıştırma izleme arayüzüyle sınırlı grup odası sunar. MCP salt okunur araç dilimi ve güvenilir hedeflere giden A2A 1.0 dilimi tamamlandı. Auth/principal ilk dilimi varsayılan kapalı tek-kullanıcı OIDC kapısıdır; tenant migration ve resource authorization henüz gereklidir. Dağıtık kuyruk ancak ölçülen yük bunu gerektirirse ele alınır.
+Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve oda oluşturma/geçmiş/çalıştırma izleme arayüzüyle sınırlı grup odası sunar. MCP salt okunur araç dilimi ve güvenilir hedeflere giden A2A 1.0 dilimi tamamlandı. Auth/principal ilk dilimi varsayılan kapalı tek-kullanıcı OIDC kapısıdır. Issue #34 tenant migration PR ile hazırlanıyor; canlı backfill ve PostgreSQL doğrulaması release gate olarak açık. Resource authorization henüz yoktur. Dağıtık kuyruk ancak ölçülen yük bunu gerektirirse ele alınır.
