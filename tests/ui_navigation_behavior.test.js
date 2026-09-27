@@ -37,6 +37,7 @@ function makeNavigation() {
   const handler = new Function(
     "state", "screens", "buttons", "current", "history", "window", "loadRoomView", "loadConversation",
     `let currentScreen = "chat", viewMode = state.mode, activeRoomId = "room-1";
+     let screenGeneration = 0;
      const setViewMode = (mode) => {
        viewMode = mode; state.mode = mode;
        if (mode === "room") state.roomLoads += 1;
@@ -110,28 +111,57 @@ test("management selection changes the edit target without changing chat agent o
 });
 
 const feedbackSource = html.match(
-  /function setAgentFormStatus\(message, isError = false\) \{[\s\S]*?\n      \}/,
+  /function setAgentFormStatus\(message, isError = false, formScreen = currentScreen\) \{[\s\S]*?\n      \}/,
 )?.[0];
 assert.ok(feedbackSource, "agent form feedback helper is present");
 
-test("create and edit feedback is written into the currently visible agent screen", () => {
-  for (const [screen, expectedId] of [["agents", "agent-edit-feedback"], ["new-agent", "agent-create-feedback"]]) {
+test("create and edit feedback stays on its originating form after navigation", () => {
+  for (const [formScreen, expectedId] of [["agents", "agent-edit-feedback"], ["new-agent", "agent-create-feedback"]]) {
     const feedback = { textContent: "", errors: [], classList: { toggle: (name, value) => feedback.errors.push([name, value]) } };
     const status = { textContent: "", classList: { toggle() {} } };
-    const run = new Function("screen", "feedback", "status", `
-      const currentScreen = screen;
-      const agentEditFeedback = screen === "agents" ? feedback : null;
-      const agentCreateFeedback = screen === "new-agent" ? feedback : null;
+    const context = new Function("initialScreen", "feedback", "status", `
+      let currentScreen = initialScreen;
+      const agentEditFeedback = initialScreen === "agents" ? feedback : null;
+      const agentCreateFeedback = initialScreen === "new-agent" ? feedback : null;
       const setStatus = (message, isError) => { status.textContent = message; };
       ${feedbackSource}
-      return setAgentFormStatus;
-    `)(screen, feedback, status);
-    run("Kaydetme başarısız", true);
-    assert.equal(feedback.textContent, "Kaydetme başarısız");
-    assert.equal(status.textContent, "Kaydetme başarısız");
-    assert.deepEqual(feedback.errors.at(-1), ["error", true]);
+      return {
+        setAgentFormStatus,
+        leaveForm: () => { currentScreen = "rooms"; },
+      };
+    `)(formScreen, feedback, status);
+    context.setAgentFormStatus("Kaydetme başladı", false, formScreen);
+    assert.equal(status.textContent, "Kaydetme başladı");
+    context.leaveForm();
+    context.setAgentFormStatus("Kaydetme tamamlandı", false, formScreen);
+    assert.equal(feedback.textContent, "Kaydetme tamamlandı");
+    assert.equal(status.textContent, "Kaydetme başladı", "late form feedback does not overwrite another screen's status");
+    assert.deepEqual(feedback.errors.at(-1), ["error", false]);
     assert.ok(html.includes(`id="${expectedId}"`));
   }
-  assert.match(html, /setAgentFormStatus\("Ajan oluşturuluyor…"\)/);
-  assert.match(html, /setAgentFormStatus\("Ajan ayarları kaydediliyor…"\)/);
+
+  assert.match(html, /setAgentFormStatus\("Ajan oluşturuluyor…", false, formScreen\)/);
+  assert.match(html, /setAgentFormStatus\("Ajan ayarları kaydediliyor…", false, formScreen\)/);
+});
+
+const formContextSource = html.match(
+  /function isCurrentFormContext\(formScreen, generation\) \{[\s\S]*?\n      \}/,
+)?.[0];
+assert.ok(formContextSource, "form screen generation guard is present");
+
+test("creating an agent only navigates to chat if the create form context is still active", () => {
+  const canNavigate = new Function("initialScreen", `
+    let currentScreen = initialScreen;
+    let screenGeneration = 4;
+    ${formContextSource}
+    const formScreen = currentScreen;
+    const formGeneration = screenGeneration;
+    currentScreen = "agents";
+    screenGeneration += 1;
+    return isCurrentFormContext(formScreen, formGeneration);
+  `)("new-agent");
+  assert.equal(canNavigate, false);
+  assert.match(html, /const stillOnForm = isCurrentFormContext\(formScreen, formGeneration\)/);
+  assert.match(html, /if \(stillOnForm\) \{\s*setAppScreen\("chat"/);
+  assert.match(html, /if \(screen !== previousScreen\) screenGeneration \+= 1/);
 });

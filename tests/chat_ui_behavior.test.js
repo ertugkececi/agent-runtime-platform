@@ -35,6 +35,7 @@ function makeSubmit({ post, recovery, preflight }) {
     uncertainSubmission: false,
     sendDisabled: false,
     status: "",
+    chatSubmissionMessage: "",
     postCalls: 0,
     monitored: [],
   };
@@ -75,6 +76,7 @@ function makeSubmit({ post, recovery, preflight }) {
      let monitoredRunId = "";
      let chatDraft = "", roomDraft = "";
      let uncertainSubmission = state.uncertainSubmission;
+     let chatSubmissionMessage = state.chatSubmissionMessage;
      let sendInFlight = state.sendInFlight;
      const submit = async (event) => {${submitBody}};
      return {
@@ -104,6 +106,7 @@ function makeSubmit({ post, recovery, preflight }) {
        sync: () => {
          state.activeRunId = activeRunId;
          state.uncertainSubmission = uncertainSubmission;
+         state.chatSubmissionMessage = chatSubmissionMessage;
          state.sendInFlight = sendInFlight;
        },
      };`,
@@ -236,4 +239,26 @@ test("accepted chat run survives navigation to rooms during the async POST and b
   await harness.submit({ preventDefault() {} });
   harness.sync();
   assert.equal(harness.state.postCalls, 1, "returning to chat cannot enqueue the same request twice");
+});
+
+
+test("chat rejection during room navigation preserves room status and send controls", async () => {
+  let rejectPost;
+  const harness = makeSubmit({
+    post: () => new Promise((_resolve, reject) => { rejectPost = reject; }),
+    recovery: async () => null,
+  });
+  const pending = harness.submit({ preventDefault() {} });
+  while (!rejectPost) await new Promise(setImmediate);
+  harness.switchScreen("rooms");
+  harness.state.status = "Grup görevi çalışıyor";
+  harness.state.sendDisabled = true;
+  rejectPost(new Error("ağ bağlantısı koptu"));
+  await pending;
+  harness.sync();
+
+  assert.equal(harness.state.status, "Grup görevi çalışıyor", "chat error does not replace room status");
+  assert.equal(harness.state.sendDisabled, true, "chat uncertainty does not unlock the room submit button");
+  assert.equal(harness.state.uncertainSubmission, true, "chat retry remains locked until recovered");
+  assert.match(harness.state.chatSubmissionMessage, /ağ bağlantısı koptu/);
 });

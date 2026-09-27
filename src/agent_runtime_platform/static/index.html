@@ -289,6 +289,7 @@
       const agentEditFeedback = document.getElementById("agent-edit-feedback");
       const agentCreateFeedback = document.getElementById("agent-create-feedback");
       let currentScreen = "chat";
+      let screenGeneration = 0;
       let viewMode = "chat";
       let managedAgentId = "";
       let chatContextGeneration = 0;
@@ -320,6 +321,7 @@
       let activeRunId = "";
       let sendInFlight = false;
       let uncertainSubmission = false;
+      let chatSubmissionMessage = "";
       let conversationRetryTimer = 0;
       let agents = [];
       let codexModels = [];
@@ -370,14 +372,18 @@
         statusElement.classList.toggle("error", isError);
       }
 
-      function setAgentFormStatus(message, isError = false) {
-        setStatus(message, isError);
-        const feedback = currentScreen === "agents" ? agentEditFeedback
-          : currentScreen === "new-agent" ? agentCreateFeedback : null;
+      function setAgentFormStatus(message, isError = false, formScreen = currentScreen) {
+        const feedback = formScreen === "agents" ? agentEditFeedback
+          : formScreen === "new-agent" ? agentCreateFeedback : null;
         if (feedback) {
           feedback.textContent = message;
           feedback.classList.toggle("error", isError);
         }
+        if (currentScreen === formScreen) setStatus(message, isError);
+      }
+
+      function isCurrentFormContext(formScreen, generation) {
+        return currentScreen === formScreen && screenGeneration === generation;
       }
 
       function readSavedRooms() {
@@ -555,7 +561,7 @@
         if (mode === "chat") {
           messageInput.placeholder = "Mesajını yaz… (Ctrl/⌘ + Enter gönderir)";
           document.getElementById("chat-title").textContent = conversationId ? "Sohbet geçmişi" : "Yeni sohbet";
-          setStatus("Ajan seçip mesaj yazabilirsin.");
+          setStatus(chatSubmissionMessage || "Ajan seçip mesaj yazabilirsin.", uncertainSubmission);
           void loadConversation();
         } else {
           messageInput.placeholder = "Grup odasına vereceğin görevi yaz…";
@@ -1014,11 +1020,13 @@
           }
           return conversation;
         } catch (error) {
-          if (requestedId === conversationId && generation === viewGeneration) {
+          if (requestedId === conversationId && generation === viewGeneration &&
+            currentScreen === "chat" && viewMode === "chat") {
             setStatus("Sohbet yüklenemedi. Bağlantı kurulunca yeniden denenecek.", true);
             clearTimeout(conversationRetryTimer);
             conversationRetryTimer = setTimeout(() => {
-              if (requestedId === conversationId && generation === viewGeneration) void loadConversation();
+              if (requestedId === conversationId && generation === viewGeneration &&
+                currentScreen === "chat" && viewMode === "chat") void loadConversation();
             }, 3000);
           }
           return null;
@@ -1108,6 +1116,7 @@
         localStorage.removeItem("agentRuntimeConversationId");
         localStorage.setItem("agentRuntimeAgentId", agentSelect.value);
         chatDraft = "";
+        chatSubmissionMessage = "";
         messageInput.value = "";
         setStatus("Yeni sohbet hazır.");
         renderMessages([]);
@@ -1128,6 +1137,7 @@
         localStorage.removeItem("agentRuntimeConversationId");
         localStorage.setItem("agentRuntimeAgentId", agentSelect.value);
         chatDraft = "";
+        chatSubmissionMessage = "";
         messageInput.value = "";
         renderEditAgent();
         setStatus("Ajan değişti. Yeni sohbet başlatabilirsin.");
@@ -1136,6 +1146,7 @@
 
       document.getElementById("edit-agent-form").addEventListener("submit", async (event) => {
         event.preventDefault();
+        const formScreen = currentScreen;
         const agent = agents.find((item) => item.id === (managedAgentId || agentSelect.value));
         if (!agent) return;
         const changes = {};
@@ -1145,18 +1156,18 @@
           const modelName = editModelSelect.value;
           const effort = editEffortSelect.value;
           if (modelName !== agent.model_name && !effort) {
-            setAgentFormStatus("Yeni model için düşünme eforu seç.", true);
+            setAgentFormStatus("Yeni model için düşünme eforu seç.", true, formScreen);
             return;
           }
           if (modelName !== agent.model_name) changes.model_name = modelName;
           if (effort && effort !== agent.model_reasoning_effort) changes.model_reasoning_effort = effort;
         }
         if (!Object.keys(changes).length) {
-          setAgentFormStatus("Değişiklik yapılmadı.");
+          setAgentFormStatus("Değişiklik yapılmadı.", false, formScreen);
           return;
         }
         editAgentButton.disabled = true;
-        setAgentFormStatus("Ajan ayarları kaydediliyor…");
+        setAgentFormStatus("Ajan ayarları kaydediliyor…", false, formScreen);
         try {
           const updated = await request(`/agents/${encodeURIComponent(agent.id)}`, {
             method: "PATCH",
@@ -1164,9 +1175,9 @@
           });
           agents = agents.map((item) => item.id === updated.id ? updated : item);
           renderEditAgent();
-          setAgentFormStatus("Ajan ayarları kaydedildi. Sonraki yanıt yeni ayarları kullanacak.");
+          setAgentFormStatus("Ajan ayarları kaydedildi. Sonraki yanıt yeni ayarları kullanacak.", false, formScreen);
         } catch (error) {
-          setAgentFormStatus(error.message, true);
+          setAgentFormStatus(error.message, true, formScreen);
         } finally {
           editAgentButton.disabled = false;
         }
@@ -1174,9 +1185,11 @@
 
       document.getElementById("create-agent-form").addEventListener("submit", async (event) => {
         event.preventDefault();
+        const formScreen = currentScreen;
+        const formGeneration = screenGeneration;
         const button = document.getElementById("create-agent-button");
         button.disabled = true;
-        setAgentFormStatus("Ajan oluşturuluyor…");
+        setAgentFormStatus("Ajan oluşturuluyor…", false, formScreen);
         const capabilities = document.getElementById("agent-capabilities").value
           .split(",").map((value) => value.trim()).filter(Boolean);
         try {
@@ -1191,15 +1204,20 @@
               capabilities,
             }),
           });
-          conversationId = "";
-          localStorage.removeItem("agentRuntimeConversationId");
-          await loadAgents(agent.id);
-          setAgentFormStatus("Ajan oluşturuldu. Mesajını yazabilirsin.");
-          setAppScreen("chat", { writeHistory: true });
-          document.getElementById("agent-capabilities").value = "";
-          messageInput.focus();
+          const stillOnForm = isCurrentFormContext(formScreen, formGeneration);
+          if (stillOnForm) {
+            conversationId = "";
+            localStorage.removeItem("agentRuntimeConversationId");
+          }
+          await loadAgents(stillOnForm ? agent.id : "");
+          setAgentFormStatus("Ajan oluşturuldu. Mesajını yazabilirsin.", false, formScreen);
+          if (stillOnForm) {
+            setAppScreen("chat", { writeHistory: true });
+            document.getElementById("agent-capabilities").value = "";
+            messageInput.focus();
+          }
         } catch (error) {
-          setAgentFormStatus(error.message, true);
+          setAgentFormStatus(error.message, true, formScreen);
         } finally {
           button.disabled = false;
         }
@@ -1249,6 +1267,7 @@
           if (contextGeneration !== chatContextGeneration || targetConversationId !== conversationId) return;
           activeRunId = accepted.id;
           monitoredRunId = "";
+          chatSubmissionMessage = "";
           chatDraft = "";
           uncertainSubmission = false;
           if (currentScreen === "chat" && viewMode === "chat") {
@@ -1280,6 +1299,7 @@
             uncertainSubmission = false;
             activeRunId = acceptedRun.run_id;
             monitoredRunId = "";
+            chatSubmissionMessage = "";
             chatDraft = "";
             if (currentScreen === "chat" && viewMode === "chat") {
               messageInput.value = "";
@@ -1287,11 +1307,14 @@
               void monitorRun(acceptedRun.run_id, targetConversationId, viewGeneration);
             }
           } else {
-            setStatus(`${error.message} Gönderim sonucu doğrulanamadı; yinelenen görev oluşturmamak için sohbeti yenileyip geçmişi denetle.`, true);
-            // If the recovery read itself failed, keep sending locked until a refresh
-            // reloads the durable conversation and its run status.
+            // Chat and room views share the form controls. Preserve chat recovery state,
+            // but never paint it into or change the controls for the active room view.
             uncertainSubmission = asyncSubmissionStarted && recovered === null;
-            sendButton.disabled = uncertainSubmission;
+            chatSubmissionMessage = `${error.message} Gönderim sonucu doğrulanamadı; yinelenen görev oluşturmamak için sohbeti yenileyip geçmişi denetle.`;
+            if (currentScreen === "chat" && viewMode === "chat") {
+              setStatus(chatSubmissionMessage, true);
+              sendButton.disabled = uncertainSubmission;
+            }
           }
         } finally {
           if (contextGeneration === chatContextGeneration) {
@@ -1322,6 +1345,7 @@
         if (!["chat", "rooms", "agents", "new-agent"].includes(screen)) screen = "chat";
         const previousScreen = currentScreen;
         currentScreen = screen;
+        if (screen !== previousScreen) screenGeneration += 1;
         if (writeHistory && window.location.hash !== `#${screen}`) {
           window.history.pushState({ screen }, "", `#${screen}`);
         }
