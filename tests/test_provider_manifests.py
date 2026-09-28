@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -38,6 +39,26 @@ def test_declared_tool_id_support(provider_id, tool_ids_supported):
     assert supports_tool_ids(provider_id) is tool_ids_supported
     assert manifest.runtime == "python"
     assert manifest.sdk
+
+
+def test_opencode_declares_the_typescript_sdk():
+    """The host runs in its native stack; its SDK version is declared here."""
+    manifest = load_manifest("opencode")
+    assert manifest.runtime == "node"
+    assert manifest.supports_tool_ids is False
+    assert supports_tool_ids("opencode") is False
+    package = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "agent_runtime_platform"
+            / "providers"
+            / "opencode"
+            / "host"
+            / "package.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert package["dependencies"]["@opencode/sdk"] in manifest.sdk
 
 
 def test_undeclared_provider_has_no_manifest():
