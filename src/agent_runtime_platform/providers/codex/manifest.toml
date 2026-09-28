@@ -1,0 +1,4 @@
+id = "codex"
+runtime = "python"
+sdk = "openai-codex>=0.156,<0.157"
+supports_tool_ids = true

@@ -10,6 +10,8 @@ from typing import Any
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+from agent_runtime_platform.providers._manifest import supports_tool_ids
+
 _ID = re.compile(r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$")
 
 
@@ -106,8 +108,8 @@ def trusted_tool_ids(servers: dict[str, dict[str, Any]] | None = None) -> set[st
 
 
 def validate_tool_ids(tool_ids: list[str], provider: str) -> list[str]:
-    if provider != "codex" and tool_ids:
-        raise ValueError("MCP tools are currently supported only by the Codex provider.")
+    if tool_ids and not supports_tool_ids(provider):
+        raise ValueError(f"MCP tools are not supported by provider '{provider}'.")
     if len(tool_ids) > 50 or len(set(tool_ids)) != len(tool_ids):
         raise ValueError("tool_ids must contain at most 50 unique MCP tool IDs.")
     for tool_id in tool_ids:

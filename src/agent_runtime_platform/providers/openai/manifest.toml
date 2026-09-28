@@ -1,0 +1,4 @@
+id = "openai"
+runtime = "python"
+sdk = "langchain-openai>=1.0,<2.0"
+supports_tool_ids = false
