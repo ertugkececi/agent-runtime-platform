@@ -60,9 +60,14 @@ model catalog is served from the bundled snapshot rather than a network fetch.
 ## Check it
 
 ```sh
-bun test          # unit tests plus one test that starts the real embedded host
+bun install --frozen-lockfile   # the lock file must match package.json
+bun run build                   # bundles the entry point into dist/
 bun run typecheck
+bun test                        # unit tests plus one test that starts the real embedded host
 ```
+
+The `opencode-host` CI job runs these steps on their own, apart from the
+Python jobs.
 
 The test suite never reaches a model service: the tests that would call a model
 use a fake host, and the embedded host test only re-checks the tool policy.
