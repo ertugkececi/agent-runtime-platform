@@ -11,7 +11,6 @@ import socket
 import time
 import re
 from urllib.parse import quote, urlparse
-from uuid import uuid4
 
 import httpx
 

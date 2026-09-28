@@ -4,7 +4,6 @@ import base64
 import hashlib
 import hmac
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -12,11 +11,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 
 from agent_runtime_platform.api import create_app
-from agent_runtime_platform.auth import COOKIE_NAME, OIDCConfig
+from agent_runtime_platform.auth import COOKIE_NAME
 from agent_runtime_platform.models import (
     Agent, AgentCapability, AuthSession, Conversation, ConversationMember, HumanChatRun, HumanChatMessage,
     HumanChatRunEvent, HumanChatSession, Message, QueueJob, Room, RoomParticipant, RoomRun,
-    RoomRunEvent, RoomRunTurn, Run, RunEvent, Task, new_id,
+    RoomRunEvent, RoomRunTurn, Run, RunEvent, Task,
 )
 from agent_runtime_platform.providers import HandoffRequest, ProviderRegistry
 from agent_runtime_platform.tenant_migration import _ids, migrate

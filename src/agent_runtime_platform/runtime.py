@@ -23,7 +23,6 @@ from agent_runtime_platform.models import (
     Task,
     RunEvent,
     QueueJob,
-    RoomRun,
     new_id,
     utc_now,
 )
