@@ -89,7 +89,6 @@ class FakeOIDCIssuer:
                 if issuer.variant == "multi_no_azp": claims["aud"] = ["runtime-client", "other-client"]
                 if issuer.variant == "multi_wrong": claims["aud"] = ["runtime-client", "other-client"]; claims["azp"] = "other-client"
                 if issuer.variant == "multi_valid": claims["aud"] = ["runtime-client", "other-client"]; claims["azp"] = "runtime-client"
-                state = form.get("state", [None])[0]
                 claims["nonce"] = issuer.expected_nonce
                 if issuer.variant == "nonce": claims["nonce"] = "wrong-nonce"
                 signing_key = issuer.bad_key if issuer.variant == "signature" else issuer.good_key

@@ -219,7 +219,6 @@ def test_interrupted_room_run_resumes_without_duplicating_completed_turn(tmp_pat
     assert partial["status"] == "running"
     assert [turn["status"] for turn in partial["turns"]] == ["completed", "completed", "running"]
 
-    original_snapshot = room["participants"][1]["agent_snapshot"]
     original_moderator_snapshot = room["participants"][0]["agent_snapshot"]
     changed = client.patch(f"/agents/{agents[0]['id']}", json={
         "name": "Updated after room creation", "instructions": "New instructions", "model_name": "new-model"

@@ -223,7 +223,6 @@ class RoomRuntimeService:
                 # Codex providers respond to the latest user message. Keep the task
                 # instruction after all attributed prior contributions in history.
                 history = [*prior, final_instruction]
-                phase = "room_moderator_summary" if is_summary else "room_participant_turn"
                 room_agent = {**snapshot, "tool_ids": []}
                 output = self.providers.generate(room_agent, history, allow_handoff=False)
                 if isinstance(output, HandoffRequest):
