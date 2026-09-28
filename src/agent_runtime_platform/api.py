@@ -103,6 +103,17 @@ def create_app(
         except MCPConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    @app.get("/agent-config/catalog")
+    def agent_config_catalog(request: Request) -> dict:
+        """Expose public provider choices and which provider has a selectable model catalog."""
+        ownership_scope(request)
+        return {
+            "providers": [
+                {"id": provider_id, "model_catalog_available": provider_id == "codex"}
+                for provider_id in provider_registry.configured_provider_ids()
+            ]
+        }
+
     @app.get("/codex/models")
     def codex_models(request: Request) -> list[dict]:
         ownership_scope(request)

@@ -8,6 +8,7 @@ from agent_runtime_platform.providers._base import (
     ModelProvider,
     ProviderError,
 )
+from agent_runtime_platform.providers._manifest import manifest_exists
 from agent_runtime_platform.providers.codex.provider import CodexChatProvider
 from agent_runtime_platform.providers.openai.provider import OpenAIChatProvider
 
@@ -21,6 +22,10 @@ class ProviderRegistry:
 
     def supports(self, provider_name: str) -> bool:
         return provider_name in self._providers
+
+    def configured_provider_ids(self) -> list[str]:
+        """Return configured providers that declare a manifest; never provider configuration."""
+        return sorted(name for name in self._providers if manifest_exists(name))
 
     def generate(
         self,
