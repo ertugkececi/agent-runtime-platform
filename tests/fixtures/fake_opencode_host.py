@@ -1,0 +1,97 @@
+"""A fake OpenCode bridge host, driven by ``FAKE_HOST_SCENARIO``.
+
+The adapter tests spawn this with the same stdin/stdout shape as the real host
+package. It opens no socket and never reaches a model service.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+
+XDG_ROOTS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME")
+
+
+def record(value: dict) -> None:
+    sys.stdout.write(json.dumps(value) + "\n")
+    sys.stdout.flush()
+
+
+def main() -> int:
+    scenario = os.environ.get("FAKE_HOST_SCENARIO", "reply")
+    request = sys.stdin.read()
+    capture = os.environ.get("FAKE_HOST_CAPTURE")
+    if capture:
+        with open(capture, "w", encoding="utf-8") as handle:
+            handle.write(request)
+    env_capture = os.environ.get("FAKE_HOST_ENV_CAPTURE")
+    if env_capture:
+        with open(env_capture, "w", encoding="utf-8") as handle:
+            json.dump({name: os.environ.get(name) for name in XDG_ROOTS}, handle)
+
+    if scenario == "silent":
+        return 3
+
+    if scenario != "no_hello":
+        protocol = int(os.environ.get("FAKE_HOST_PROTOCOL", "1"))
+        record({"type": "hello", "bridge_protocol": protocol})
+
+    if scenario in {"reply", "no_hello", "bad_version"}:
+        record({"type": "result", "kind": "reply", "content": "Fake reply."})
+    elif scenario == "handoff":
+        record({
+            "type": "result",
+            "kind": "handoff",
+            "capability": "research",
+            "task": "Find the SQLite schema for queue_jobs.",
+        })
+    elif scenario == "events":
+        record({
+            "type": "event",
+            "server": "files",
+            "tool": "search",
+            "status": "running",
+            "phase": "running",
+        })
+        record({"type": "result", "kind": "reply", "content": "Done."})
+    elif scenario == "future":
+        # An additive 1.x record the adapter does not know.
+        record({"type": "telemetry", "value": 1})
+        record({"type": "result", "kind": "reply", "content": "Done."})
+    elif scenario == "two_results":
+        record({"type": "result", "kind": "reply", "content": "First."})
+        record({"type": "result", "kind": "reply", "content": "Second."})
+    elif scenario == "result_then_error":
+        record({"type": "result", "kind": "reply", "content": "Done."})
+        record({"type": "error", "kind": "provider", "message": "Late failure."})
+        return 1
+    elif scenario == "error":
+        record({"type": "error", "kind": "provider", "message": "The fake host failed the model request."})
+        return 1
+    elif scenario == "startup_error":
+        # No hello: the real entry point writes this when it cannot start at all.
+        record({
+            "type": "error",
+            "kind": "provider",
+            "message": "The OpenCode bridge host failed to start.",
+        })
+        return 1
+    elif scenario == "crash":
+        return 3
+    elif scenario == "garbage":
+        sys.stdout.write("not json\n")
+        sys.stdout.flush()
+        return 1
+    elif scenario == "hang":
+        with open(os.environ["FAKE_HOST_PID"], "w", encoding="utf-8") as handle:
+            handle.write(str(os.getpid()))
+        time.sleep(120)
+    else:
+        raise SystemExit(f"unknown FAKE_HOST_SCENARIO {scenario!r}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

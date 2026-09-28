@@ -1,0 +1,1 @@
+"""The opencode provider module."""
