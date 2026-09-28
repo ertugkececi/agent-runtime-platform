@@ -41,3 +41,14 @@ packages = ["src/agent_runtime_platform"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Correctness rules only: import-convention errors, syntax errors, and pyflakes
+# (undefined names, unused imports and variables). Formatting rules (E7, E5, W)
+# are deliberately excluded here: they describe style this repository does not
+# yet enforce, and imposing them would rewrite large amounts of code in one
+# step. A dedicated `ruff format` change owns that, after open work lands.
+select = ["E4", "E9", "F"]
