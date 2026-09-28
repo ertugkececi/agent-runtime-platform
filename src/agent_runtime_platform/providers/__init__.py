@@ -25,6 +25,7 @@ from agent_runtime_platform.providers._manifest import (
 from agent_runtime_platform.providers._registry import ProviderRegistry
 from agent_runtime_platform.providers.codex.provider import CodexChatProvider, list_codex_models
 from agent_runtime_platform.providers.openai.provider import OpenAIChatProvider
+from agent_runtime_platform.providers.opencode.provider import list_opencode_models
 
 __all__ = [
     "CodexChatProvider",
@@ -36,6 +37,7 @@ __all__ = [
     "ProviderManifest",
     "ProviderRegistry",
     "list_codex_models",
+    "list_opencode_models",
     "load_manifest",
     "manifest_exists",
     "supports_tool_ids",

@@ -36,6 +36,9 @@ async function run(
     async createHost() {
       return fakeHost();
     },
+    async listModels() {
+      return [];
+    },
     write: (record) => {
       records.push(record);
     },
@@ -238,5 +241,70 @@ describe("runBridge", () => {
       },
     });
     expect(closed).toBe(true);
+  });
+
+  test("answers a models request with one catalog result and exits zero", async () => {
+    const models = [
+      {
+        id: "opencode/big-model",
+        label: "Big Model",
+        is_default: true,
+        default_effort: "",
+        efforts: ["low", "high"],
+      },
+    ];
+    let created = false;
+    const { records, code } = await run(
+      { bridge_protocol: 1, operation: "models" },
+      {
+        async listModels() {
+          return models;
+        },
+        async createHost() {
+          created = true;
+          return fakeHost();
+        },
+      },
+    );
+    expect(created).toBe(false);
+    expect(code).toBe(0);
+    expect(records).toEqual([
+      { type: "hello", bridge_protocol: 1 },
+      { type: "result", kind: "models", models },
+    ]);
+    expect(records.filter((record) => record.type === "result")).toHaveLength(1);
+  });
+
+  test("fails a models request with one error record", async () => {
+    const { records, code } = await run(
+      { bridge_protocol: 1, operation: "models" },
+      {
+        async listModels() {
+          throw new BridgeError("provider", "The model catalog is unavailable.");
+        },
+      },
+    );
+    expect(code).toBe(1);
+    expect(records.at(-1)).toEqual({
+      type: "error",
+      kind: "provider",
+      message: "The model catalog is unavailable.",
+    });
+  });
+
+  test("refuses an incompatible version before reading the catalog", async () => {
+    let listed = false;
+    const { records, code } = await run(
+      { bridge_protocol: 2, operation: "models" },
+      {
+        async listModels() {
+          listed = true;
+          return [];
+        },
+      },
+    );
+    expect(listed).toBe(false);
+    expect(code).toBe(1);
+    expect(records.at(-1)).toMatchObject({ type: "error", kind: "bridge_version" });
   });
 });

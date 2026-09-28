@@ -29,7 +29,10 @@ export interface HistoryMessage {
   content: string;
 }
 
-export interface BridgeRequest {
+/** A call either runs one model turn (the default) or reads the model catalog. */
+export interface TurnRequest {
+  /** Explicitly names the default operation; the adapter normally omits it. */
+  operation?: "turn";
   bridge_protocol: number;
   model: string;
   instructions: string;
@@ -43,6 +46,28 @@ export interface BridgeRequest {
    * the field is therefore parsed for the contract but not applied here.
    */
   reasoning_effort?: string;
+}
+
+export interface ModelsRequest {
+  bridge_protocol: number;
+  operation: "models";
+}
+
+export type BridgeRequest = TurnRequest | ModelsRequest;
+
+/**
+ * One model choice, in the shape the HTTP model catalogs share.
+ *
+ * `id` is the reference a turn request uses (`provider/model`), so a catalog
+ * entry can be sent back as `model` unchanged. `default_effort` is empty when
+ * the model has no default variant; `efforts` are the model's variant ids.
+ */
+export interface CatalogModel {
+  id: string;
+  label: string;
+  is_default: boolean;
+  default_effort: string;
+  efforts: string[];
 }
 
 export interface HelloRecord {
@@ -71,7 +96,13 @@ export interface HandoffRecord {
   task: string;
 }
 
-export type ResultRecord = ReplyRecord | HandoffRecord;
+export interface ModelsRecord {
+  type: "result";
+  kind: "models";
+  models: CatalogModel[];
+}
+
+export type ResultRecord = ReplyRecord | HandoffRecord | ModelsRecord;
 
 export interface ErrorRecord {
   type: "error";
@@ -98,7 +129,8 @@ export class BridgeError extends Error {
   }
 }
 
-const REQUEST_FIELDS = new Set([
+const TURN_FIELDS = new Set([
+  "operation",
   "bridge_protocol",
   "model",
   "instructions",
@@ -108,6 +140,8 @@ const REQUEST_FIELDS = new Set([
   "remote_capabilities",
   "reasoning_effort",
 ]);
+
+const MODELS_FIELDS = new Set(["bridge_protocol", "operation"]);
 
 export function hello(): HelloRecord {
   return { type: "hello", bridge_protocol: BRIDGE_PROTOCOL };
@@ -127,8 +161,26 @@ export function parseRequest(value: unknown): BridgeRequest {
   if (!isRecord(value)) {
     throw new BridgeError("request", "The request must be a JSON object.");
   }
+  const operation = value["operation"];
+  if (operation !== undefined && operation !== "turn" && operation !== "models") {
+    throw new BridgeError(
+      "request",
+      "The request field 'operation' must be 'turn' or 'models'.",
+    );
+  }
+  if (operation === "models") {
+    for (const field of Object.keys(value)) {
+      if (!MODELS_FIELDS.has(field)) {
+        throw new BridgeError("request", `The request has an unknown field '${field}'.`);
+      }
+    }
+    return {
+      bridge_protocol: requireInteger(value, "bridge_protocol"),
+      operation: "models",
+    };
+  }
   for (const field of Object.keys(value)) {
-    if (!REQUEST_FIELDS.has(field)) {
+    if (!TURN_FIELDS.has(field)) {
       throw new BridgeError("request", `The request has an unknown field '${field}'.`);
     }
   }
@@ -147,6 +199,7 @@ export function parseRequest(value: unknown): BridgeRequest {
     value.reasoning_effort === undefined ? undefined : requireString(value, "reasoning_effort");
 
   return {
+    ...(operation === "turn" ? { operation: "turn" as const } : {}),
     bridge_protocol: bridgeProtocol,
     model,
     instructions,

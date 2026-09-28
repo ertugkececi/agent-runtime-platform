@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { BridgeRequest } from "../src/protocol";
+import type { TurnRequest } from "../src/protocol";
 import {
   buildPromptText,
   buildSystemPrompt,
@@ -9,7 +9,7 @@ import {
   turnOutcome,
 } from "../src/turn";
 
-function request(overrides: Partial<BridgeRequest> = {}): BridgeRequest {
+function request(overrides: Partial<TurnRequest> = {}): TurnRequest {
   return {
     bridge_protocol: 1,
     model: "opencode/big-model",

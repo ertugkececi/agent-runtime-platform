@@ -37,10 +37,8 @@
           },
           "model_provider": {
             "default": "codex",
-            "enum": [
-              "codex",
-              "openai"
-            ],
+            "maxLength": 40,
+            "minLength": 1,
             "title": "Model Provider",
             "type": "string"
           },
@@ -156,10 +154,8 @@
           "model_provider": {
             "anyOf": [
               {
-                "enum": [
-                  "codex",
-                  "openai"
-                ],
+                "maxLength": 40,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -1004,6 +1000,29 @@
           }
         },
         "summary": "List Mcp Tools"
+      }
+    },
+    "/opencode/models": {
+      "get": {
+        "operationId": "opencode_models_opencode_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Opencode Models Opencode Models Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Opencode Models"
       }
     },
     "/rooms": {

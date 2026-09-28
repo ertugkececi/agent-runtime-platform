@@ -4,7 +4,8 @@
  * The order of the record stream is part of the contract. `hello` is always
  * first. A version mismatch or a tool grant fails before any host work starts.
  * A turn emits `event` records while it runs and ends with exactly one `result`
- * record. Every failure path emits exactly one `error` record and a non-zero
+ * record; a models request ends with the one `result` record that carries the
+ * catalog. Every failure path emits exactly one `error` record and a non-zero
  * exit code.
  */
 
@@ -17,6 +18,7 @@ import {
   COMPATIBLE_MIN,
   type BridgeRecord,
   type BridgeRequest,
+  type CatalogModel,
   type ErrorRecord,
 } from "./protocol";
 import type { TraceEvent } from "./trace";
@@ -40,6 +42,8 @@ export type TurnHostFactory = (options: TurnHostOptions) => Promise<TurnHost>;
 
 export interface BridgeDependencies {
   readonly createHost: TurnHostFactory;
+  /** Read the model catalog from one short-lived host. */
+  readonly listModels: () => Promise<CatalogModel[]>;
   readonly write: (record: BridgeRecord) => void;
 }
 
@@ -64,6 +68,16 @@ export async function runBridge(input: string, dependencies: BridgeDependencies)
           `window ${COMPATIBLE_MIN} <= v < ${COMPATIBLE_MAX_EXCLUSIVE}.`,
       ),
     );
+  }
+
+  if (request.operation === "models") {
+    try {
+      const models = await dependencies.listModels();
+      write({ type: "result", kind: "models", models });
+      return 0;
+    } catch (error) {
+      return fail(write, error);
+    }
   }
 
   if (request.tool_ids.length > 0) {

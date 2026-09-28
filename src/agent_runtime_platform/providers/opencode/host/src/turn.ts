@@ -3,7 +3,7 @@
  * one result record. Pure functions only - the SDK never appears here.
  */
 
-import type { BridgeRequest } from "./protocol";
+import type { TurnRequest } from "./protocol";
 
 export interface ReplyResult {
   kind: "reply";
@@ -42,7 +42,7 @@ const HANDOFF_INSTRUCTIONS = [
  * carry the tool restriction and the handoff contract; the host adds only the
  * invariants it enforces itself.
  */
-export function buildSystemPrompt(request: BridgeRequest): string {
+export function buildSystemPrompt(request: TurnRequest): string {
   const sections = [PREAMBLE, "", "Agent instructions:", request.instructions];
   if (request.allow_handoff) {
     sections.push("", HANDOFF_INSTRUCTIONS);
@@ -60,7 +60,7 @@ export function buildSystemPrompt(request: BridgeRequest): string {
  * The user prompt for the turn. The session is fresh on every call, so the
  * whole conversation travels as one JSON message, as the Codex provider does.
  */
-export function buildPromptText(request: BridgeRequest): string {
+export function buildPromptText(request: TurnRequest): string {
   return (
     "Here is the conversation history in chronological order as JSON. " +
     "Respond to the latest user message; earlier messages are context.\n" +

@@ -1,10 +1,11 @@
 /**
  * The embedded OpenCode host, driven for one call.
  *
- * One process, one turn: start the SDK host, create a session in a private
- * working directory, make sure the tool policy is in force, prompt, wait for
- * the turn to end, and read the final assistant text. Nothing is shared
- * between calls; the process exits when the turn does.
+ * One process, one call: start the SDK host, boot a location in a private
+ * working directory, then either run one turn (create a session, make sure the
+ * tool policy is in force, prompt, read the final assistant text) or read the
+ * model catalog. Nothing is shared between calls; the process exits when the
+ * call does.
  */
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -23,15 +24,32 @@ import {
   assertToolPolicy,
   type PermissionRule,
 } from "./policy";
-import { BridgeError } from "./protocol";
+import { BridgeError, type CatalogModel } from "./protocol";
+import type { ToolDescriptor } from "./trace";
 import { createTraceMapper } from "./trace";
 import { extractFinalText, turnOutcome } from "./turn";
 
 const READINESS_ATTEMPTS = 50;
 const READINESS_DELAY_MS = 200;
 
-export async function startTurnHost(options: TurnHostOptions): Promise<TurnHost> {
-  const model = parseModelReference(options.model);
+/** The system prompt of the host that only reads the model catalog. */
+const CATALOG_SYSTEM = "The bridge host agent. It reads the model catalog and runs no turn.";
+
+/** One private OpenCode host: the SDK instance, its roots, and its cleanup. */
+interface PrivateHost {
+  readonly opencode: Awaited<ReturnType<typeof OpenCode.create>>;
+  readonly workDirectory: string;
+  readonly toolCatalog: () => readonly ToolDescriptor[];
+  close(): Promise<void>;
+}
+
+/**
+ * Start the SDK host in a private root with the tool policy plugin installed.
+ *
+ * The config directory is private, so the host never loads the invoking user's
+ * OpenCode configuration, and the policy plugin is in place before any work.
+ */
+async function openPrivateHost(system: string): Promise<PrivateHost> {
   const privateRoot = mkdtempSync(join(tmpdir(), "agent-runtime-opencode-"));
   const workDirectory = join(privateRoot, "work");
   const privateConfig = configDirectory(process.env, privateRoot);
@@ -45,8 +63,6 @@ export async function startTurnHost(options: TurnHostOptions): Promise<TurnHost>
     opencode = await OpenCode.create({
       // An empty tool catalog is the policy; see policy.ts. The agent carries
       // the rules too, and `verifyPolicy` below re-checks the effective ones.
-      // The config directory is private, so the host never loads the invoking
-      // user's OpenCode configuration.
       config: {
         directory: privateConfig,
         project: false,
@@ -56,7 +72,7 @@ export async function startTurnHost(options: TurnHostOptions): Promise<TurnHost>
             [BRIDGE_AGENT_ID]: {
               description: "The bridge host agent. It runs without tools.",
               mode: "primary",
-              system: options.system,
+              system,
               permissions: TOOL_POLICY,
             },
           },
@@ -78,9 +94,28 @@ export async function startTurnHost(options: TurnHostOptions): Promise<TurnHost>
     throw error;
   }
 
+  return {
+    opencode,
+    workDirectory,
+    toolCatalog: catalog,
+    async close() {
+      try {
+        await opencode.close();
+      } finally {
+        process.chdir(previousCwd);
+        rmSync(privateRoot, { recursive: true, force: true });
+      }
+    },
+  };
+}
+
+export async function startTurnHost(options: TurnHostOptions): Promise<TurnHost> {
+  const model = parseModelReference(options.model);
+  const host = await openPrivateHost(options.system);
+
   try {
-    const session = await opencode.sessions.create({
-      location: { directory: workDirectory },
+    const session = await host.opencode.sessions.create({
+      location: { directory: host.workDirectory },
       agent: BRIDGE_AGENT_ID,
       model: {
         providerID: model.providerID,
@@ -92,27 +127,27 @@ export async function startTurnHost(options: TurnHostOptions): Promise<TurnHost>
     // A location boots asynchronously, and the host plugins (including this
     // policy) are applied during that boot. Wait for the session's agent
     // before re-checking the policy.
-    await waitForAgent(opencode);
+    await waitForAgent(host.opencode);
 
     return {
       async verifyPolicy() {
-        const plugins = await opencode.plugin.list();
+        const plugins = await host.opencode.plugin.list();
         if (!plugins.data.some((entry) => entry.id === POLICY_PLUGIN_ID)) {
           throw new BridgeError(
             "provider",
             "The OpenCode tool policy plugin is not active. Refusing to start the turn.",
           );
         }
-        const agent = await opencode.agent.get({ agentID: BRIDGE_AGENT_ID });
+        const agent = await host.opencode.agent.get({ agentID: BRIDGE_AGENT_ID });
         assertToolPolicy(agent.data.permissions as readonly PermissionRule[]);
       },
 
       async prompt(text, onTrace) {
         const controller = new AbortController();
-        const mapper = createTraceMapper(catalog);
+        const mapper = createTraceMapper(host.toolCatalog);
         const subscription = (async () => {
           try {
-            for await (const event of opencode.events.subscribe({ signal: controller.signal })) {
+            for await (const event of host.opencode.events.subscribe({ signal: controller.signal })) {
               if (!belongsToSession(event, session.id)) continue;
               const trace = mapper(event);
               if (trace) onTrace(trace);
@@ -122,13 +157,13 @@ export async function startTurnHost(options: TurnHostOptions): Promise<TurnHost>
           }
         })();
         try {
-          await opencode.sessions.prompt({ sessionID: session.id, text });
-          await opencode.sessions.wait({ sessionID: session.id });
+          await host.opencode.sessions.prompt({ sessionID: session.id, text });
+          await host.opencode.sessions.wait({ sessionID: session.id });
         } finally {
           controller.abort();
           await subscription;
         }
-        const messages = await opencode.message.list({ sessionID: session.id });
+        const messages = await host.opencode.message.list({ sessionID: session.id });
         const outcome = turnOutcome(messages.data);
         if (outcome !== "succeeded") {
           throw new BridgeError(
@@ -144,19 +179,47 @@ export async function startTurnHost(options: TurnHostOptions): Promise<TurnHost>
       },
 
       async close() {
-        try {
-          await opencode.close();
-        } finally {
-          process.chdir(previousCwd);
-          rmSync(privateRoot, { recursive: true, force: true });
-        }
+        await host.close();
       },
     };
   } catch (error) {
-    await opencode.close().catch(() => {});
-    process.chdir(previousCwd);
-    rmSync(privateRoot, { recursive: true, force: true });
+    await host.close().catch(() => {});
     throw error;
+  }
+}
+
+/**
+ * Read the model catalog from one short-lived host.
+ *
+ * The catalog is the bundled snapshot; a provider without credentials simply
+ * has no models, so an empty list is a valid answer. Entries use the shared
+ * HTTP catalog shape, and `id` is the reference a turn request sends as
+ * `model`.
+ */
+export async function listModels(): Promise<CatalogModel[]> {
+  const host = await openPrivateHost(CATALOG_SYSTEM);
+  try {
+    await host.opencode.sessions.create({
+      location: { directory: host.workDirectory },
+      agent: BRIDGE_AGENT_ID,
+    });
+    await waitForAgent(host.opencode);
+    const [models, fallback] = await Promise.all([
+      host.opencode.model.list(),
+      host.opencode.model.default(),
+    ]);
+    const defaultModel = fallback.data;
+    return models.data.map((model) => ({
+      id: `${model.providerID}/${model.id}`,
+      label: model.name,
+      is_default:
+        defaultModel?.providerID === model.providerID && defaultModel.id === model.id,
+      default_effort: "",
+      efforts: model.variants.map((variant) => variant.id),
+    }));
+  } finally {
+    // A failed close must not replace the answer the call produced.
+    await host.close().catch(() => {});
   }
 }
 

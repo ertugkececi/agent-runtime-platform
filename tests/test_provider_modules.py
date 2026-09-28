@@ -59,6 +59,13 @@ def test_default_registry_registers_exactly_codex_and_openai():
     assert registry.supports("opencode") is False
 
 
+def test_the_opencode_flag_adds_the_provider(monkeypatch):
+    monkeypatch.setenv("AGENT_RUNTIME_FEATURE_PROVIDER_OPENCODE", "on")
+    registry = ProviderRegistry()
+    assert sorted(registry._providers) == ["codex", "openai", "opencode"]
+    assert registry.supports("opencode") is True
+
+
 def test_injected_registry_replaces_the_defaults():
     registry = ProviderRegistry({"openai": _FakeProvider("hello")})
     assert sorted(registry._providers) == ["openai"]
