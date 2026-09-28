@@ -18,7 +18,12 @@ PROVIDERS = Path(__file__).resolve().parents[1] / "src" / "agent_runtime_platfor
 
 
 def _provider_modules() -> list[Path]:
-    return sorted(PROVIDERS.rglob("*.py"))
+    # The OpenCode host package keeps its TypeScript dependencies under the
+    # provider directory. Installed packages are not provider modules, even
+    # when one of them ships Python sources.
+    return sorted(
+        module for module in PROVIDERS.rglob("*.py") if "node_modules" not in module.parts
+    )
 
 
 def _raised_names(tree: ast.AST) -> list[str]:

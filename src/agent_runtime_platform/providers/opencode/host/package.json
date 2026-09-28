@@ -1,0 +1,20 @@
+{
+  "name": "@agent-runtime-platform/opencode-host",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenCode bridge host: one JSON turn request on stdin, NDJSON records on stdout.",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.0.18",
+    "@opencode/sdk": "2.0.18"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
+  }
+}
