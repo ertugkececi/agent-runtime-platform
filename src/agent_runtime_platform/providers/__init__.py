@@ -16,6 +16,12 @@ from agent_runtime_platform.providers._base import (
     ModelProvider,
     ProviderError,
 )
+from agent_runtime_platform.providers._manifest import (
+    ProviderManifest,
+    load_manifest,
+    manifest_exists,
+    supports_tool_ids,
+)
 from agent_runtime_platform.providers._registry import ProviderRegistry
 from agent_runtime_platform.providers.codex.provider import CodexChatProvider, list_codex_models
 from agent_runtime_platform.providers.openai.provider import OpenAIChatProvider
@@ -27,6 +33,10 @@ __all__ = [
     "ModelProvider",
     "OpenAIChatProvider",
     "ProviderError",
+    "ProviderManifest",
     "ProviderRegistry",
     "list_codex_models",
+    "load_manifest",
+    "manifest_exists",
+    "supports_tool_ids",
 ]
