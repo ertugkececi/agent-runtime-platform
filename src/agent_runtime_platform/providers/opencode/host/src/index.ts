@@ -15,13 +15,14 @@ const home = preparePrivateHome();
 
 let exitCode = 1;
 try {
-  const [{ runBridge }, { startTurnHost }] = await Promise.all([
+  const [{ runBridge }, { startTurnHost, listModels }] = await Promise.all([
     import("./bridge"),
     import("./session"),
   ]);
   const input = readFileSync(0, "utf8");
   exitCode = await runBridge(input, {
     createHost: startTurnHost,
+    listModels,
     write: (record) => {
       process.stdout.write(`${JSON.stringify(record)}\n`);
     },

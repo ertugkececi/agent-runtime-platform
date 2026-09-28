@@ -10,7 +10,11 @@ from fastapi.responses import FileResponse
 from agent_runtime_platform.database import Database
 from agent_runtime_platform.auth import AuthMiddleware, OIDCAuth, OIDCConfig, install_auth_routes
 from agent_runtime_platform.a2a import A2AError, configured_targets
-from agent_runtime_platform.providers import ProviderRegistry, list_codex_models
+from agent_runtime_platform.providers import (
+    ProviderRegistry,
+    list_codex_models,
+    list_opencode_models,
+)
 from agent_runtime_platform.mcp_tools import MCPConfigurationError, public_tool_catalog
 from agent_runtime_platform.rooms import RoomRuntimeService
 from agent_runtime_platform.resource_auth import ResourceAuthorization, OwnershipScope
@@ -109,7 +113,7 @@ def create_app(
         ownership_scope(request)
         return {
             "providers": [
-                {"id": provider_id, "model_catalog_available": provider_id == "codex"}
+                {"id": provider_id, "model_catalog_available": provider_id in {"codex", "opencode"}}
                 for provider_id in provider_registry.configured_provider_ids()
             ]
         }
@@ -121,6 +125,20 @@ def create_app(
             return list_codex_models()
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Codex model list is unavailable.") from exc
+
+    @app.get("/opencode/models")
+    def opencode_models(request: Request) -> list[dict]:
+        ownership_scope(request)
+        if not provider_registry.supports("opencode"):
+            raise HTTPException(
+                status_code=404, detail="The OpenCode model provider is not configured."
+            )
+        try:
+            return list_opencode_models()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503, detail="OpenCode model list is unavailable."
+            ) from exc
 
     @app.post("/agents", status_code=status.HTTP_201_CREATED)
     def create_agent(request: AgentCreate, http_request: Request) -> dict:

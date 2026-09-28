@@ -20,6 +20,13 @@ function request(overrides: Record<string, unknown> = {}): Record<string, unknow
   };
 }
 
+/** Parse a request that must be a turn, so its fields are typed. */
+function parseTurn(value: unknown): import("../src/protocol").TurnRequest {
+  const parsed = parseRequest(value);
+  if (parsed.operation === "models") throw new Error("expected a turn request");
+  return parsed;
+}
+
 describe("hello", () => {
   test("announces the protocol this host speaks", () => {
     expect(hello()).toEqual({ type: "hello", bridge_protocol: 1 });
@@ -40,7 +47,7 @@ describe("isCompatible", () => {
 
 describe("parseRequest", () => {
   test("accepts a complete request", () => {
-    const parsed = parseRequest(request());
+    const parsed = parseTurn(request());
     expect(parsed.bridge_protocol).toBe(1);
     expect(parsed.model).toBe("opencode/big-model");
     expect(parsed.instructions).toBe("Be helpful.");
@@ -52,7 +59,7 @@ describe("parseRequest", () => {
   });
 
   test("carries the optional fields when present", () => {
-    const parsed = parseRequest(
+    const parsed = parseTurn(
       request({
         allow_handoff: true,
         remote_capabilities: ["research"],
@@ -97,7 +104,7 @@ describe("parseRequest", () => {
   });
 
   test("accepts non-empty tool_ids; refusing them is the bridge's job", () => {
-    expect(parseRequest(request({ tool_ids: ["fixture/lookup"] })).tool_ids).toEqual([
+    expect(parseTurn(request({ tool_ids: ["fixture/lookup"] })).tool_ids).toEqual([
       "fixture/lookup",
     ]);
   });
@@ -106,6 +113,30 @@ describe("parseRequest", () => {
     for (const value of [null, 4, "request", ["request"]]) {
       expect(() => parseRequest(value)).toThrow("must be a JSON object");
     }
+  });
+
+  test("parses a models request as its own shape", () => {
+    expect(parseRequest({ bridge_protocol: 1, operation: "models" })).toEqual({
+      bridge_protocol: 1,
+      operation: "models",
+    });
+    expect(parseRequest(request({ operation: "turn" })).operation).toBe("turn");
+  });
+
+  test("refuses an unknown operation", () => {
+    expect(() => parseRequest({ bridge_protocol: 1, operation: "catalog" })).toThrow(
+      "'turn' or 'models'",
+    );
+  });
+
+  test("refuses turn fields on a models request", () => {
+    expect(() =>
+      parseRequest({ bridge_protocol: 1, operation: "models", model: "opencode/big-model" }),
+    ).toThrow("unknown field 'model'");
+  });
+
+  test("refuses a models request without a protocol version", () => {
+    expect(() => parseRequest({ operation: "models" })).toThrow("must be an integer");
   });
 
   test("never echoes field values in error messages", () => {

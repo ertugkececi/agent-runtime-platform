@@ -31,6 +31,17 @@ contract's optional `reasoning_effort` is accepted; OpenCode selects effort
 through model variants, so the adapter names it in the reference
 (`provider/model#variant`) rather than in that field.
 
+A call either runs a turn or reads the model catalog:
+
+```sh
+printf '%s' '{"bridge_protocol": 1, "operation": "models"}' | bun run start
+```
+
+The catalog call boots the same private host, reads the bundled model snapshot
+(no network), and answers with one `result` record whose `kind` is `models`.
+Each entry carries the `provider/model` reference, a label, the default flag,
+and the model's effort variants.
+
 The process writes `hello` first, one `event` per tool lifecycle step, exactly
 one final `result` or `error`, and exits zero only when it wrote a `result`.
 

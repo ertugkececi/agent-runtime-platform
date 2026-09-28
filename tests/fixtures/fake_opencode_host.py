@@ -40,6 +40,29 @@ def main() -> int:
 
     if scenario in {"reply", "no_hello", "bad_version"}:
         record({"type": "result", "kind": "reply", "content": "Fake reply."})
+    elif scenario == "models":
+        record({
+            "type": "result",
+            "kind": "models",
+            "models": [
+                {
+                    "id": "opencode/big-model",
+                    "label": "Big Model",
+                    "is_default": True,
+                    "default_effort": "",
+                    "efforts": ["low", "high"],
+                },
+                {
+                    "id": "opencode/plain-model",
+                    "label": "Plain Model",
+                    "is_default": False,
+                    "default_effort": "",
+                    "efforts": [],
+                },
+            ],
+        })
+    elif scenario == "invalid_models":
+        record({"type": "result", "kind": "models", "models": [{"id": "opencode/big-model"}]})
     elif scenario == "handoff":
         record({
             "type": "result",

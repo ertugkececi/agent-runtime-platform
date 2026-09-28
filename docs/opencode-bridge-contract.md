@@ -11,15 +11,18 @@ text.
 
 ## Call model: per-call runner
 
-Each model turn runs a short-lived TypeScript process:
+Each call runs a short-lived TypeScript process. A call either runs one model
+turn or reads the model catalog; both use the same framing, version handshake,
+and error shape.
 
 1. The adapter spawns the host with a private environment (see
    [Isolation](#isolation)) and writes exactly **one JSON request** object on
    stdin.
 2. The host drives one model interaction (`OpenCode.create()` then
-   `sessions.prompt()`), writes **NDJSON records** to stdout, and exits.
+   `sessions.prompt()`), or reads the model catalog, writes **NDJSON records**
+   to stdout, and exits.
 3. The adapter reads stdout line by line, keeps the interesting records, and
-   treats process exit as the end of the turn.
+   treats process exit as the end of the call.
 
 There is no daemon, no socket, no shared state between calls, and no
 long-lived host. This mirrors the Codex provider's `tempfile` plus
@@ -51,6 +54,9 @@ announces its own version as its first stdout record.
   is the only exception to "never silently adapt" in this contract: it exists
   so an additive 1.x host does not break an older adapter. Unknown *versions*
   are never ignored.
+- The `models` operation is additive inside the window: it does not change the
+  version. An adapter that asks an older host for models gets one explicit
+  `request` error, because the host refuses the unknown `operation` field.
 
 ## Request (stdin)
 
@@ -59,6 +65,7 @@ than ignored.
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
+| `operation` | string | optional | `"turn"` (the default) or `"models"`. A `models` request carries `bridge_protocol` and `operation` and nothing else. |
 | `bridge_protocol` | int | yes | Protocol version the adapter speaks. |
 | `model` | string | yes | Model identifier to run. |
 | `instructions` | string | yes | Developer instructions; may carry the tool restriction and the handoff contract. |
@@ -82,6 +89,20 @@ Example:
   "tool_ids": []
 }
 ```
+
+### `models` — the catalog
+
+```json
+{"bridge_protocol": 1, "operation": "models"}
+```
+
+- A `models` request carries no turn field; any other field on it is a
+  `request` error, because unknown fields are refused rather than ignored.
+- The host reads the bundled model catalog, never the network, and never
+  prompts. A provider without credentials simply contributes no models, so an
+  empty catalog is a valid answer.
+- The single `result` record is `{"type": "result", "kind": "models",
+  "models": […]}`; each entry is described under [Records](#records-stdout-ndjson).
 
 ## Records (stdout NDJSON)
 
@@ -111,11 +132,20 @@ listed for a record type are not sent.
 {"type": "result", "kind": "handoff", "capability": "research", "task": "Find the SQLite schema for queue_jobs."}
 ```
 
+```json
+{"type": "result", "kind": "models", "models": [{"id": "opencode/space-bunny-free", "label": "Space Bunny Free", "is_default": true, "default_effort": "", "efforts": ["low", "medium", "high", "xhigh", "max"]}]}
+```
+
 - A turn produced at most one `result` record, and it is the last record.
 - `kind: "reply"` yields the assistant's final text.
 - `kind: "handoff"` yields a runtime `HandoffRequest` with `capability` and
   `task`; `handoff` is only allowed when the request set `allow_handoff`.
 - `reply` content is the model's final answer only; no concatenated stream.
+- `kind: "models"` answers a `models` request: the catalog in the shape the
+  HTTP model catalogs share. `id` is the `provider/model` reference a turn
+  sends as `model`; `label` is display text; `is_default` marks the host's
+  default; `efforts` are the model's variant ids; `default_effort` is empty
+  when the model has no default variant.
 
 ### `error` — everything else fails here
 
@@ -182,6 +212,7 @@ client-driven keep-alive.
 | --- | --- |
 | `result` / `reply` | `ModelOutput` (string) |
 | `result` / `handoff` | `HandoffRequest(capability, task)` |
+| `result` / `models` | the HTTP model catalog (`GET /opencode/models`) |
 | `error` (`tool_refused`, `request`) | explicit `ProviderError`, surfaced as `422` |
 | `error` (`provider`, `bridge_version`) | `ProviderError`, surfaced as `500`-class unless a mapping says otherwise |
 | kill on timeout | `ProviderError` ("…timed out.") |
@@ -192,11 +223,12 @@ delivers.
 
 ## Guarding this contract
 
-The pytest suite will pin side-by-side examples of every record, a version
-handshake table (compatible and refused), a `tool_refused` turn, and a
-"result is last and unique" assertion. This document and its examples are the
-authority for those tests. It does not change the generated HTTP contract
-(`contracts/openapi.json`); the drift rule there is untouched.
+The pytest suite pins side-by-side examples of every record, a version
+handshake table (compatible and refused), a `tool_refused` turn, a `models`
+catalog answer, and a "result is last and unique" assertion. This document and
+its examples are the authority for those tests. The bridge is not part of the
+generated HTTP contract (`contracts/openapi.json`); that drift rule is
+untouched.
 
 ## References
 

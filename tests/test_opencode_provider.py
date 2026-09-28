@@ -23,6 +23,7 @@ from agent_runtime_platform.providers.opencode.provider import (
     MAXIMUM_TIMEOUT_SECONDS,
     TIMEOUT_ENV,
     OpenCodeChatProvider,
+    list_opencode_models,
 )
 
 FAKE_HOST = Path(__file__).resolve().parent / "fixtures" / "fake_opencode_host.py"
@@ -153,6 +154,58 @@ def test_a_host_error_record_becomes_a_provider_error(monkeypatch):
     provider = _provider(monkeypatch, "error")
     with pytest.raises(ProviderError, match="The fake host failed the model request."):
         provider.generate(_agent(), HISTORY)
+
+
+def test_the_model_catalog_round_trips_through_the_host(monkeypatch, tmp_path):
+    capture = tmp_path / "request.json"
+    provider = _provider(monkeypatch, "models", FAKE_HOST_CAPTURE=str(capture))
+    assert provider.list_models() == [
+        {
+            "id": "opencode/big-model",
+            "label": "Big Model",
+            "is_default": True,
+            "default_effort": "",
+            "efforts": ["low", "high"],
+        },
+        {
+            "id": "opencode/plain-model",
+            "label": "Plain Model",
+            "is_default": False,
+            "default_effort": "",
+            "efforts": [],
+        },
+    ]
+    assert json.loads(capture.read_text(encoding="utf-8")) == {
+        "bridge_protocol": 1,
+        "operation": "models",
+    }
+
+
+def test_the_module_function_lists_models_through_the_default_provider(monkeypatch):
+    monkeypatch.setenv("FAKE_HOST_SCENARIO", "models")
+    monkeypatch.setattr(
+        OpenCodeChatProvider,
+        "_default_command",
+        staticmethod(lambda: [sys.executable, str(FAKE_HOST)]),
+    )
+    assert list_opencode_models()[0]["id"] == "opencode/big-model"
+
+
+def test_an_incomplete_catalog_record_is_refused(monkeypatch):
+    with pytest.raises(ProviderError, match="invalid response"):
+        _provider(monkeypatch, "invalid_models").list_models()
+
+
+def test_a_host_error_record_fails_the_catalog(monkeypatch):
+    provider = _provider(monkeypatch, "error")
+    with pytest.raises(ProviderError, match="The fake host failed the model request."):
+        provider.list_models()
+
+
+def test_a_catalog_without_hello_is_refused(monkeypatch):
+    provider = _provider(monkeypatch, "no_hello")
+    with pytest.raises(ProviderError, match="incompatible bridge protocol"):
+        provider.list_models()
 
 
 def test_a_host_that_skips_hello_is_refused(monkeypatch):

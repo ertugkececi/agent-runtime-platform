@@ -50,6 +50,11 @@ XDG_ROOTS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HO
 ToolEvent = Callable[[dict[str, str]], None]
 
 
+def list_opencode_models() -> list[dict[str, Any]]:
+    """Expose the OpenCode model and effort choices, in the shared catalog shape."""
+    return OpenCodeChatProvider().list_models()
+
+
 class OpenCodeChatProvider:
     """Run OpenCode through its bridge host, one process per call."""
 
@@ -77,6 +82,12 @@ class OpenCodeChatProvider:
         callback = agent.get("tool_event_callback")
         exit_code, records = self._run(request, callback if callable(callback) else None)
         return self._interpret(records, exit_code, allow_handoff=allow_handoff)
+
+    def list_models(self) -> list[dict[str, Any]]:
+        """Run one host process and return its model catalog."""
+        request = {"bridge_protocol": BRIDGE_PROTOCOL, "operation": "models"}
+        exit_code, records = self._run(request, None)
+        return _catalog_value(records, exit_code)
 
     @staticmethod
     def _request(
@@ -169,32 +180,76 @@ class OpenCodeChatProvider:
         *,
         allow_handoff: bool,
     ) -> ModelOutput:
-        error: dict[str, Any] | None = None
-        result: dict[str, Any] | None = None
-        for index, record in enumerate(records):
-            if result is not None:
-                # The contract makes `result` the last and only result record.
+        return _result_value(
+            _final_record(records, exit_code), allow_handoff=allow_handoff
+        )
+
+
+def _final_record(records: list[dict[str, Any]], exit_code: int) -> dict[str, Any]:
+    error: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    for index, record in enumerate(records):
+        if result is not None:
+            # The contract makes `result` the last and only result record.
+            raise ProviderError(INVALID_RESPONSE)
+        kind = record["type"]
+        if kind == "error":
+            if error is not None:
                 raise ProviderError(INVALID_RESPONSE)
-            kind = record["type"]
-            if kind == "error":
-                if error is not None:
-                    raise ProviderError(INVALID_RESPONSE)
-                error = record
-            elif kind == "result":
-                result = record
-            elif kind == "hello" and index != 0:
-                raise ProviderError(INVALID_RESPONSE)
-            # Unknown record types are ignored within the compatible window.
-        if error is not None:
-            message = error.get("message")
-            if not isinstance(message, str) or not message.strip():
-                raise ProviderError(INVALID_RESPONSE)
-            raise ProviderError(message)
-        if _hello_version(records) is None:
-            raise ProviderError(VERSION_MESSAGE)
-        if result is None or exit_code != 0:
-            raise ProviderError(FAILED_REQUEST)
-        return _result_value(result, allow_handoff=allow_handoff)
+            error = record
+        elif kind == "result":
+            result = record
+        elif kind == "hello" and index != 0:
+            raise ProviderError(INVALID_RESPONSE)
+        # Unknown record types are ignored within the compatible window.
+    if error is not None:
+        message = error.get("message")
+        if not isinstance(message, str) or not message.strip():
+            raise ProviderError(INVALID_RESPONSE)
+        raise ProviderError(message)
+    if _hello_version(records) is None:
+        raise ProviderError(VERSION_MESSAGE)
+    if result is None or exit_code != 0:
+        raise ProviderError(FAILED_REQUEST)
+    return result
+
+
+def _catalog_value(records: list[dict[str, Any]], exit_code: int) -> list[dict[str, Any]]:
+    result = _final_record(records, exit_code)
+    if result.get("kind") != "models":
+        raise ProviderError(INVALID_RESPONSE)
+    models = result.get("models")
+    if not isinstance(models, list):
+        raise ProviderError(INVALID_RESPONSE)
+    return [_catalog_entry(entry) for entry in models]
+
+
+def _catalog_entry(entry: Any) -> dict[str, Any]:
+    """Keep only the catalog fields, with the types the HTTP response promises."""
+    if not isinstance(entry, dict):
+        raise ProviderError(INVALID_RESPONSE)
+    model_id = entry.get("id")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise ProviderError(INVALID_RESPONSE)
+    label = entry.get("label")
+    if not isinstance(label, str):
+        raise ProviderError(INVALID_RESPONSE)
+    efforts = entry.get("efforts")
+    if not isinstance(efforts, list) or any(not isinstance(effort, str) for effort in efforts):
+        raise ProviderError(INVALID_RESPONSE)
+    is_default = entry.get("is_default")
+    if not isinstance(is_default, bool):
+        raise ProviderError(INVALID_RESPONSE)
+    default_effort = entry.get("default_effort")
+    if not isinstance(default_effort, str):
+        raise ProviderError(INVALID_RESPONSE)
+    return {
+        "id": model_id,
+        "label": label,
+        "is_default": is_default,
+        "default_effort": default_effort,
+        "efforts": list(efforts),
+    }
 
 
 def _child_environment() -> dict[str, str]:

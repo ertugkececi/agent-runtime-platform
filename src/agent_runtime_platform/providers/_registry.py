@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_runtime_platform.features import is_enabled
 from agent_runtime_platform.providers._base import (
     HandoffRequest,
     ModelOutput,
@@ -11,14 +12,22 @@ from agent_runtime_platform.providers._base import (
 from agent_runtime_platform.providers._manifest import manifest_exists
 from agent_runtime_platform.providers.codex.provider import CodexChatProvider
 from agent_runtime_platform.providers.openai.provider import OpenAIChatProvider
+from agent_runtime_platform.providers.opencode.provider import OpenCodeChatProvider
 
 
 class ProviderRegistry:
     def __init__(self, providers: dict[str, ModelProvider] | None = None) -> None:
-        self._providers = providers if providers is not None else {
+        if providers is not None:
+            self._providers = providers
+            return
+        self._providers = {
             "codex": CodexChatProvider(),
             "openai": OpenAIChatProvider(),
         }
+        # The provider ships behind a flag; without it the deployment behaves
+        # exactly as before and a model_provider of "opencode" is refused.
+        if is_enabled("provider_opencode"):
+            self._providers["opencode"] = OpenCodeChatProvider()
 
     def supports(self, provider_name: str) -> bool:
         return provider_name in self._providers
