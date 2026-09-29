@@ -9,6 +9,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { preparePrivateHome } from "../src/isolation";
@@ -83,5 +84,24 @@ describe("the embedded host", () => {
     } finally {
       await host.close();
     }
+  }, 60_000);
+
+  test("keeps its database on disk under the data root", async () => {
+    const dataHome = process.env["XDG_DATA_HOME"];
+    expect(dataHome).toBeDefined();
+    const databasePath = join(dataHome as string, "opencode", "opencode.db");
+    const host = await startTurnHost({
+      model: MODEL,
+      system: "You are a test agent.",
+      mcpServers: [],
+    });
+    try {
+      // The embedded SDK would default to an in-memory database; the bridge
+      // must keep the file so a provider sign-in survives the process.
+      expect(existsSync(databasePath)).toBe(true);
+    } finally {
+      await host.close();
+    }
+    expect(existsSync(databasePath)).toBe(true);
   }, 60_000);
 });

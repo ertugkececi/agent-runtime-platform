@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyPrivateUmask, configDirectory, preparePrivateHome, redirectConsoleToStderr } from "../src/isolation";
+import { applyPrivateUmask, configDirectory, dataDirectory, preparePrivateHome, redirectConsoleToStderr } from "../src/isolation";
 
 describe("preparePrivateHome", () => {
   test("points the unset XDG roots at one private directory", () => {
@@ -121,6 +121,21 @@ describe("configDirectory", () => {
   test("falls back to a private directory, never the user's config", () => {
     expect(configDirectory({}, "/tmp/fallback")).toBe("/tmp/fallback/opencode");
     expect(configDirectory({ XDG_CONFIG_HOME: "  " }, "/tmp/fallback")).toBe(
+      "/tmp/fallback/opencode",
+    );
+  });
+});
+
+describe("dataDirectory", () => {
+  test("uses the environment's data root when there is one", () => {
+    expect(dataDirectory({ XDG_DATA_HOME: "/private/data" }, "/tmp/fallback")).toBe(
+      "/private/data/opencode",
+    );
+  });
+
+  test("falls back to a private directory, never the user's data", () => {
+    expect(dataDirectory({}, "/tmp/fallback")).toBe("/tmp/fallback/opencode");
+    expect(dataDirectory({ XDG_DATA_HOME: "  " }, "/tmp/fallback")).toBe(
       "/tmp/fallback/opencode",
     );
   });

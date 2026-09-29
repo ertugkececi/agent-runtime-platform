@@ -106,7 +106,10 @@ Every call runs in a private home of its own. The adapter creates it with mode
 directory when the call ends. `XDG_DATA_HOME` is the one exception: it points
 at the persistent, app-owned data root (`AGENT_RUNTIME_OPENCODE_HOME`, default
 `~/.agent-runtime-platform/opencode-home/data`, mode `0700`), which is where
-OpenCode stores its credential database and sessions. A host started outside
+OpenCode stores its credential database and sessions. The host passes that
+path to the embedded SDK explicitly (`database: { path: <data>/opencode/opencode.db }`);
+the SDK would otherwise default to an in-memory database and lose every
+credential with the process. A host started outside
 the adapter fills in unset roots with its own private directory, so the
 invoking user's OpenCode configuration is never read or modified. See the
 bridge contract for the full property.

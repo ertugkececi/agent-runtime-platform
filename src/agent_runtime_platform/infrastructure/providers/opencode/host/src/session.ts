@@ -5,9 +5,10 @@
  * working directory, then either run one turn (create a session, make sure the
  * tool policy is in force, prompt, read the final assistant text), read the
  * model catalog, or connect a provider integration. Nothing is shared between
- * calls; the process exits when the call does. Credentials live in the data
- * root the adapter points at `XDG_DATA_HOME`, which the adapter may keep
- * across calls so a connection survives.
+ * calls; the process exits when the call does. The host keeps its SQLite
+ * database on disk under the data root the adapter points at `XDG_DATA_HOME`
+ * (`opencode.db`), because the embedded SDK would otherwise default to an
+ * in-memory database and lose every credential with the process.
  */
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -17,7 +18,7 @@ import { join } from "node:path";
 import { OpenCode, Model } from "@opencode/sdk";
 
 import type { TurnHost, TurnHostOptions } from "./bridge";
-import { configDirectory } from "./isolation";
+import { configDirectory, dataDirectory } from "./isolation";
 import { createToolPolicyPlugin } from "./plugin";
 import {
   BRIDGE_AGENT_ID,
@@ -66,7 +67,10 @@ async function openPrivateHost(
   const privateRoot = mkdtempSync(join(tmpdir(), "agent-runtime-opencode-"));
   const workDirectory = join(privateRoot, "work");
   const privateConfig = configDirectory(process.env, privateRoot);
+  const dataRoot = dataDirectory(process.env, privateRoot);
+  const databasePath = join(dataRoot, "opencode.db");
   mkdirSync(workDirectory, { recursive: true, mode: 0o700 });
+  mkdirSync(dataRoot, { recursive: true, mode: 0o700 });
   const previousCwd = process.cwd();
   process.chdir(workDirectory);
 
@@ -76,6 +80,10 @@ async function openPrivateHost(
   let opencode: Awaited<ReturnType<typeof OpenCode.create>>;
   try {
     opencode = await OpenCode.create({
+      // The embedded SDK defaults to an in-memory database; the bridge keeps
+      // its database on disk under the persistent data root instead, so a
+      // provider sign-in survives the process that stored it.
+      database: { path: databasePath },
       // The grant list is the policy; see policy.ts. The agent carries the
       // rules too, and `verifyPolicy` below re-checks the effective ones.
       config: {

@@ -272,8 +272,9 @@ the invoking user's OpenCode configuration. The concrete mechanism:
 - `XDG_DATA_HOME` is the one deliberate exception: it points at the
   persistent, app-owned data root (`AGENT_RUNTIME_OPENCODE_HOME`, mode
   `0700`), because that is where OpenCode stores the credential database a
-  sign-in must survive in. The invoking user's own data root is still never
-  used.
+  sign-in must survive in. The host keeps its SQLite database on disk there
+  (`opencode.db`); the embedded SDK's default is an in-memory database. The
+  invoking user's own data root is still never used.
 - The child runs with umask `077`, so every file the host creates is `0600`
   and every directory is `0700`.
 - The host itself still fills in unset roots with a private directory, so a
