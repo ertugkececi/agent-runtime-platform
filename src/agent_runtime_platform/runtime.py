@@ -102,8 +102,8 @@ def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _agent_payload(agent: Agent) -> dict[str, Any]:
-    return {
+def _agent_payload(agent: Agent, published: bool | None = None) -> dict[str, Any]:
+    payload = {
         "id": agent.id,
         "name": agent.name,
         "description": agent.description,
@@ -118,6 +118,9 @@ def _agent_payload(agent: Agent) -> dict[str, Any]:
         "created_at": agent.created_at.isoformat(),
         "updated_at": agent.updated_at.isoformat(),
     }
+    if published is not None:
+        payload["published"] = published
+    return payload
 
 
 def _message_payload(message: Message) -> dict[str, Any]:
@@ -236,12 +239,25 @@ class AgentRuntimeService:
             raise InvalidMessageError(str(exc)) from exc
         with self.database.session() as session:
             agent_data = dict(data)
+            requested_published = agent_data.pop("published", None)
+            resource_auth = getattr(self, "resource_auth", None)
+            if requested_published is not None and (resource_auth is None or resource_auth.mode != "tenant_roles"):
+                raise InvalidMessageError("The published field requires tenant_roles mode.")
             capabilities = agent_data.pop("capabilities", [])
             agent = Agent(**agent_data)
             agent.capability_records = [AgentCapability(capability=value) for value in capabilities]
             session.add(agent)
+            session.flush()
+            resource_auth = getattr(self, "resource_auth", None)
+            if resource_auth is not None and resource_auth.mode == "tenant_roles":
+                published = True if requested_published is None else bool(requested_published)
+                session.execute(text("UPDATE agents SET published=:published WHERE id=:id"), {"published":int(published),"id":agent.id})
+            else:
+                published = None
+            if resource_auth is not None:
+                resource_auth.assign_created_root(session, Agent, agent.id, owner_scope)
             session.commit()
-            return _agent_payload(agent)
+            return _agent_payload(agent, published)
 
     def list_agents(self, capability: str | None = None, owner_scope: OwnershipScope | None = None) -> list[dict[str, Any]]:
         with self.database.session() as session:
@@ -260,6 +276,12 @@ class AgentRuntimeService:
                     )
                 )
             agents = session.scalars(statement.order_by(Agent.created_at, Agent.id)).all()
+            resource_auth = getattr(self, "resource_auth", None)
+            if resource_auth is not None and resource_auth.mode == "tenant_roles":
+                published_by_id = dict(session.execute(text(
+                    "SELECT id,published FROM agents WHERE id IN (" + ",".join(":id" + str(i) for i in range(len(agents))) + ")"
+                ), {"id" + str(i): agent.id for i, agent in enumerate(agents)}).all()) if agents else {}
+                return [_agent_payload(agent, bool(published_by_id[agent.id])) for agent in agents]
             return [_agent_payload(agent) for agent in agents]
 
     def update_agent(self, agent_id: str, changes: dict[str, Any], owner_scope: OwnershipScope | None = None) -> dict[str, Any]:
@@ -270,6 +292,8 @@ class AgentRuntimeService:
             agent = session.scalar(statement)
             if agent is None:
                 raise AgentNotFoundError(agent_id)
+            if owner_scope is not None and owner_scope.role == "member":
+                raise PermissionError("Only tenant admins can update agents.")
             if "model_provider" in changes and not self.providers.supports(changes["model_provider"]):
                 raise InvalidMessageError("The requested model provider is not configured.")
             updated_values = dict(changes)
@@ -280,8 +304,12 @@ class AgentRuntimeService:
                     updated_values["tool_ids"] = validate_tool_ids(proposed_tools, proposed_provider)
                 except ValueError as exc:
                     raise InvalidMessageError(str(exc)) from exc
+            published = updated_values.pop("published", None)
+            resource_auth = getattr(self, "resource_auth", None)
+            if published is not None and (resource_auth is None or resource_auth.mode != "tenant_roles"):
+                raise InvalidMessageError("The published field requires tenant_roles mode.")
             capabilities = updated_values.pop("capabilities", None)
-            if updated_values or capabilities is not None:
+            if updated_values or capabilities is not None or published is not None:
                 for key, value in updated_values.items():
                     setattr(agent, key, value)
                 if capabilities is not None:
@@ -290,7 +318,13 @@ class AgentRuntimeService:
                     ]
                 agent.version += 1
                 agent.updated_at = utc_now()
+                if published is not None:
+                    session.execute(text("UPDATE agents SET published=:published WHERE id=:id"), {"published":int(bool(published)),"id":agent.id})
                 session.commit()
+            resource_auth = getattr(self, "resource_auth", None)
+            if resource_auth is not None and resource_auth.mode == "tenant_roles":
+                published_value = session.execute(text("SELECT published FROM agents WHERE id=:id"), {"id":agent.id}).scalar_one()
+                return _agent_payload(agent, bool(published_value))
             return _agent_payload(agent)
 
     def create_conversation(self, agent_ids: list[str], owner_scope: OwnershipScope | None = None) -> dict[str, Any]:
@@ -311,6 +345,9 @@ class AgentRuntimeService:
             conversation = Conversation(status="open")
             session.add(conversation)
             session.flush()
+            resource_auth = getattr(self, "resource_auth", None)
+            if resource_auth is not None:
+                resource_auth.assign_created_root(session, Conversation, conversation.id, owner_scope)
             session.add_all(
                 [ConversationMember(conversation_id=conversation.id, agent_id=agent_id) for agent_id in agent_ids]
             )
@@ -331,6 +368,9 @@ class AgentRuntimeService:
             conversation = Conversation(status="open")
             session.add(conversation)
             session.flush()
+            resource_auth = getattr(self, "resource_auth", None)
+            if resource_auth is not None:
+                resource_auth.assign_created_root(session, Conversation, conversation.id, owner_scope)
             session.add(ConversationMember(conversation_id=conversation.id, agent_id=agent.id))
             session.add(HumanChatSession(conversation_id=conversation.id, agent_id=agent.id))
             session.commit()
@@ -626,13 +666,31 @@ class AgentRuntimeService:
         ), {"id": conversation_id}).first()
         if row is None or not row.tenant_id or not row.owner_id:
             raise RuntimeError("Queued run has no verified conversation owner.")
+        if resource_auth.mode == "tenant_roles":
+            return resource_auth.scope_for_owner(row.owner_id, row.tenant_id)
         return OwnershipScope(owner_id=row.owner_id, tenant_id=row.tenant_id)
+
+    def _assert_worker_agent_access(self, session: Session, conversation_id: str, agent_id: str) -> None:
+        resource_auth = getattr(self, "resource_auth", None)
+        if resource_auth is None or resource_auth.mode != "tenant_roles":
+            return
+        scope = self._scope_for_conversation(session, conversation_id)
+        if scope is None:
+            raise RuntimeError("Tenant role worker scope is unavailable.")
+        row = session.execute(text("""
+            SELECT enabled,published,tenant_id FROM agents WHERE id=:id
+        """), {"id":agent_id}).one_or_none()
+        if row is None or row.tenant_id != scope.tenant_id or not row.enabled:
+            raise RuntimeError("Queued agent is no longer enabled in the conversation tenant.")
+        if scope.role == "member" and not row.published:
+            raise RuntimeError("Queued agent is no longer published for tenant members.")
 
     def _prepare_context(self, state: MessagingState) -> dict[str, Any]:
         with self.database.session() as session:
             run = session.get(Run, state["run_id"])
             if run is not None:
                 target_id = run.target_agent_id
+                self._assert_worker_agent_access(session, run.conversation_id, target_id)
                 inbound_sequence = session.scalar(
                     select(Message.sequence).where(Message.run_id == run.id).limit(1)
                 )
@@ -659,6 +717,7 @@ class AgentRuntimeService:
                 if chat_run is None:
                     raise RuntimeError("Run disappeared before model execution.")
                 target_id = chat_run.target_agent_id
+                self._assert_worker_agent_access(session, chat_run.conversation_id, target_id)
                 inbound_sequence = session.scalar(
                     select(HumanChatMessage.sequence).where(
                         HumanChatMessage.run_id == chat_run.id,
@@ -681,12 +740,15 @@ class AgentRuntimeService:
                     for message in messages
                 ]
                 target_config = dict(chat_run.target_config_snapshot)
-                try:
-                    target_config["remote_a2a_capabilities"] = sorted({
-                        capability for target in configured_targets() for capability in target["capabilities"]
-                    })
-                except A2AError:
+                if self.resource_auth is not None and self.resource_auth.mode == "tenant_roles":
                     target_config["remote_a2a_capabilities"] = []
+                else:
+                    try:
+                        target_config["remote_a2a_capabilities"] = sorted({
+                            capability for target in configured_targets() for capability in target["capabilities"]
+                        })
+                    except A2AError:
+                        target_config["remote_a2a_capabilities"] = []
                 _append_human_chat_event(
                     session,
                     chat_run,
@@ -767,16 +829,21 @@ class AgentRuntimeService:
             run_parent = session.get(Run, run_id)
             chat_parent = session.get(HumanChatRun, run_id) if run_parent is None else None
             if run_parent is not None:
-                scope = self._scope_for_conversation(session, run_parent.conversation_id)
+                conversation_id = run_parent.conversation_id
+                scope = self._scope_for_conversation(session, conversation_id)
             elif chat_parent is not None:
-                scope = self._scope_for_conversation(session, chat_parent.conversation_id)
+                conversation_id = chat_parent.conversation_id
+                scope = self._scope_for_conversation(session, conversation_id)
             else:
+                conversation_id = None
                 scope = None
             if scope is not None:
                 statement = statement.where(scoped_root(Agent, scope))
             current_agent = session.scalar(statement)
             if scope is not None and current_agent is None:
                 raise RuntimeError("The persisted run agent is outside its parent conversation owner scope.")
+            if conversation_id is not None and scope is not None and self.resource_auth.mode == "tenant_roles":
+                self._assert_worker_agent_access(session, conversation_id, agent["id"])
             if current_agent is not None:
                 active_agent_version = current_agent.version
                 current_grants = set(current_agent.tool_ids or []) if current_agent.enabled else set()
@@ -886,6 +953,23 @@ class AgentRuntimeService:
             if chat_run is None or root_task is None:
                 return None
             child = session.scalar(select(Task).where(Task.root_run_id == run_id, Task.parent_task_id == root_task.id))
+            if self.resource_auth is not None and self.resource_auth.mode == "tenant_roles":
+                if child is None or child.config_snapshot.get("kind") != "a2a":
+                    # Let the normal tenant-scoped local handoff policy run; never consult global A2A.
+                    return None
+                child.status = "failed"
+                child.error_code = "tenant_remote_handoff_disabled"
+                child.remote_status = "tenant_remote_handoff_disabled"
+                child.completed_at = datetime.now(timezone.utc)
+                _append_human_chat_event(session, chat_run, "delegated_task_failed", {
+                    "task_id": child.id, "error_code": child.error_code,
+                    "remote_status": child.remote_status,
+                })
+                session.commit()
+                history.append({"role": "user", "content":
+                    "Internal delegation result: remote delegation is disabled in tenant role mode. "
+                    "Answer the original request without claiming delegation."})
+                return {"history": history, "allow_handoff": False}
             if child is not None and child.config_snapshot.get("kind") != "a2a":
                 return None
             if child is not None and child.status == "completed" and child.config_snapshot.get("kind") == "a2a":

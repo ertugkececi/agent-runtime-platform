@@ -115,6 +115,17 @@
             "title": "Name",
             "type": "string"
           },
+          "published": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published"
+          },
           "tool_ids": {
             "items": {
               "type": "string"
@@ -243,6 +254,17 @@
               }
             ],
             "title": "Name"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published"
           },
           "tool_ids": {
             "anyOf": [

@@ -11,12 +11,12 @@ only records things that are not yet written down anywhere else.
 | **#66** | Backend skeleton and contract foundation | **complete (7/7)** |
 | **#67** | OpenCode model provider | **complete (7/7)** |
 | **#68** | Frontend (React console) | **complete (8/8)** |
-| **#69** | Security and assurance | next — sub-issues #92–#95 |
+| **#69** | Security and assurance | in progress — #92 delivered, #93 next |
 
 Follow-ups found while working: **#103** (layered directories) and **#104**
 (mypy gate); **#98** (a2a poll deadline) is closed. **#38** and its draft pull
-request **#39** are both closed (decision 2026-09-29): the tenant-role work is
-re-implemented in **#92**.
+request **#39** are both closed (decision 2026-09-29): the tenant-role work was
+re-implemented in **#92** and is on `main` default-off.
 
 ## What is on `main` now
 
@@ -39,6 +39,14 @@ re-implemented in **#92**.
   Vite + React + TypeScript, with its API client generated from
   `contracts/openapi.json` (`openapi-typescript` + `openapi-fetch`), plus the
   design system and accessibility work (#84–#91; console PRs #1–#8).
+- Opt-in tenant membership roles are on `main`, default-off (#92):
+  `AGENT_RUNTIME_RESOURCE_AUTH_MODE=tenant_roles` with `AGENT_RUNTIME_AUTH_MODE=oidc`
+  resolves the principal from exactly one active `tenant_memberships` row,
+  applies admin/member plus published-agent policy, rechecks queued work, and
+  denies the process-global catalogs. The offline SQLite-only
+  `agent-runtime-tenant-role-migrate` command applies the `tenant_roles_v1`
+  schema; startup never migrates and PostgreSQL is rejected fail-closed.
+  `docs/tenant-roles.md` is the reference.
 
 ## Next: Epic #69 — Security and assurance
 
@@ -47,11 +55,11 @@ Epic #68 is delivered: the frontend is complete in the separate
 here. Epic #69 collects the security and assurance work; the sub-issues are
 worked in this order:
 
-**#92 → #93 → #94 → #95**
+**#93 → #94 → #95**
 
-#92 re-applies the tenant-role and published-agent policy from the closed
-#38/#39, default-off, and keeps OIDC/mapping plus PostgreSQL/restore
-verification as release gates, collected in #93.
+#92 delivered the tenant-role and published-agent policy from the closed
+#38/#39, default-off; OIDC/mapping plus PostgreSQL/restore verification remain
+open release gates, collected in #93.
 
 ## Environment notes
 

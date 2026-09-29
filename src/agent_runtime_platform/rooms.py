@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from agent_runtime_platform.database import Database
@@ -34,6 +34,24 @@ class RoomRuntimeService:
         self.database = database
         self.providers = providers
 
+    def _assert_worker_agent_access(self, session: Session, room_id: str, agent_id: str) -> None:
+        resource_auth = getattr(self, "resource_auth", None)
+        if resource_auth is None or resource_auth.mode != "tenant_roles":
+            return
+        root = session.execute(text(
+            "SELECT owner_id,tenant_id FROM rooms WHERE id=:id"
+        ), {"id":room_id}).one_or_none()
+        if root is None or not root.owner_id or not root.tenant_id:
+            raise RuntimeError("Queued room has no verified owner and tenant.")
+        scope = resource_auth.scope_for_owner(root.owner_id, root.tenant_id)
+        agent = session.execute(text(
+            "SELECT enabled,published,tenant_id FROM agents WHERE id=:id"
+        ), {"id":agent_id}).one_or_none()
+        if agent is None or agent.tenant_id != scope.tenant_id or not agent.enabled:
+            raise RuntimeError("Queued room agent is no longer enabled in its tenant.")
+        if scope.role == "member" and not agent.published:
+            raise RuntimeError("Queued room agent is no longer published for tenant members.")
+
     def create_room(self, name: str, participant_agent_ids: list[str], moderator_agent_id: str, owner_scope: OwnershipScope | None = None) -> dict[str, Any]:
         if not 2 <= len(participant_agent_ids) <= 5:
             raise InvalidMessageError("A room must have between 2 and 5 participants.")
@@ -56,6 +74,9 @@ class RoomRuntimeService:
             room = Room(id=new_id(), name=name.strip())
             session.add(room)
             session.flush()
+            resource_auth = getattr(self, "resource_auth", None)
+            if resource_auth is not None:
+                resource_auth.assign_created_root(session, Room, room.id, owner_scope)
             for position, agent in enumerate(agents, 1):
                 session.add(RoomParticipant(
                     room_id=room.id, agent_id=agent.id, position=position,
@@ -187,6 +208,7 @@ class RoomRuntimeService:
                         contributions.append((turn, snapshot))
                         continue
                     snapshot = next(item for item in run.agent_snapshots if item["id"] == turn.agent_id)
+                    self._assert_worker_agent_access(session, run.room_id, turn.agent_id)
                     turn.status = "running"
                     _append_event(session, run, "room_turn_started", {
                         "position": turn.position, "agent_id": turn.agent_id,

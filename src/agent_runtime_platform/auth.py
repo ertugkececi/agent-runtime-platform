@@ -16,7 +16,8 @@ import httpx
 import jwt
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.types import ASGIApp
 
@@ -60,11 +61,17 @@ class OIDCConfig:
     legacy_subject: str
     tenant_id: str = "legacy"
     session_ttl_seconds: int = int(SESSION_TTL.total_seconds())
+    resource_auth_mode: str = "off"
 
     @classmethod
     def from_environment(cls) -> OIDCConfig | None:
         mode = os.getenv("AGENT_RUNTIME_AUTH_MODE", "off").strip().lower()
+        resource_mode = os.getenv("AGENT_RUNTIME_RESOURCE_AUTH_MODE", "off").strip().lower()
+        if resource_mode not in {"off", "legacy_owner", "tenant_roles"}:
+            raise RuntimeError("AGENT_RUNTIME_RESOURCE_AUTH_MODE must be 'off', 'legacy_owner', or 'tenant_roles'.")
         if mode == "off":
+            if resource_mode != "off":
+                raise RuntimeError("Resource authorization requires OIDC authentication.")
             return None
         if mode != "oidc":
             raise RuntimeError("AGENT_RUNTIME_AUTH_MODE must be 'off' or 'oidc'.")
@@ -92,6 +99,7 @@ class OIDCConfig:
             legacy_subject=required["AGENT_RUNTIME_OIDC_LEGACY_SUB"],
             tenant_id=os.getenv("AGENT_RUNTIME_OIDC_LEGACY_TENANT", "legacy"),
             session_ttl_seconds=_session_ttl_from_environment(),
+            resource_auth_mode=resource_mode,
         )
 
 
@@ -236,13 +244,23 @@ class OIDCAuth:
         if claims.get("nonce") != nonce:
             raise ValueError("OIDC nonce mismatch.")
         subject = claims.get("sub")
-        if not isinstance(subject, str) or not hmac.compare_digest(subject, self.config.legacy_subject):
-            raise PermissionError("This identity is not the configured legacy operator.")
+        if not isinstance(subject, str) or not subject or len(subject) > 500:
+            raise PermissionError("The OIDC subject is invalid.")
+        if self.config.resource_auth_mode == "tenant_roles":
+            with self.database.session() as db:
+                membership = self._active_membership(db, self.config.issuer, subject)
+            if membership is None:
+                raise PermissionError("No unique active tenant membership exists for this identity.")
+            tenant_id, scopes = membership.tenant_id, [f"tenant:{membership.role}"]
+        else:
+            if not hmac.compare_digest(subject, self.config.legacy_subject):
+                raise PermissionError("This identity is not the configured legacy operator.")
+            tenant_id, scopes = self.config.tenant_id, ["legacy:operator"]
         session_id = secrets.token_urlsafe(32)
         now = datetime.now(timezone.utc)
         row = AuthSession(
             session_hash=_hash(session_id), issuer=self.config.issuer, subject=subject,
-            tenant_id=self.config.tenant_id, scopes=["legacy:operator"],
+            tenant_id=tenant_id, scopes=scopes,
             expires_at=now + timedelta(seconds=self.config.session_ttl_seconds),
         )
         with self.database.session() as db:
@@ -255,6 +273,20 @@ class OIDCAuth:
             db.commit()
         return session_id
 
+    @staticmethod
+    def _active_membership(db, issuer: str, subject: str):
+        try:
+            rows = db.execute(text("""
+                SELECT id,tenant_id,role FROM tenant_memberships
+                WHERE oidc_issuer=:issuer AND oidc_subject=:subject AND active=1
+                ORDER BY tenant_id,id
+            """), {"issuer": issuer, "subject": subject}).all()
+        except SQLAlchemyError as exc:
+            raise RuntimeError("Tenant membership lookup failed.") from exc
+        if len(rows) != 1 or rows[0]._mapping["role"] not in {"admin", "member"}:
+            return None
+        return rows[0]
+
     def load_principal(self, session_id: str | None) -> Principal | None:
         if not session_id:
             return None
@@ -263,12 +295,18 @@ class OIDCAuth:
         with self.database.session() as db:
             row = db.scalar(select(AuthSession).where(AuthSession.session_hash == digest))
             expires_at = row.expires_at.replace(tzinfo=timezone.utc) if row and row.expires_at.tzinfo is None else (row.expires_at if row else now)
-            if (row is None or row.revoked_at is not None or expires_at <= now
-                    or row.issuer != self.config.issuer
-                    or row.subject != self.config.legacy_subject
-                    or row.tenant_id != self.config.tenant_id):
+            if row is None or row.revoked_at is not None or expires_at <= now or row.issuer != self.config.issuer:
                 return None
-            return Principal("human", row.issuer, row.subject, row.tenant_id, tuple(row.scopes), digest)
+            if self.config.resource_auth_mode == "tenant_roles":
+                membership = self._active_membership(db, row.issuer, row.subject)
+                if membership is None or membership.tenant_id != row.tenant_id:
+                    return None
+                scopes = (f"tenant:{membership.role}",)
+            else:
+                if row.subject != self.config.legacy_subject or row.tenant_id != self.config.tenant_id:
+                    return None
+                scopes = tuple(row.scopes)
+            return Principal("human", row.issuer, row.subject, row.tenant_id, scopes, digest)
 
     def revoke(self, session_id: str | None) -> None:
         if not session_id:
@@ -305,6 +343,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             response.headers.setdefault("X-Content-Type-Options", "nosniff")
             response.headers.setdefault("Referrer-Policy", "no-referrer")
             return response
+        if self.auth.config.resource_auth_mode == "tenant_roles":
+            reserved = {"tenant_id", "owner_id", "subject", "oidc_subject", "role", "published"}
+            if any(key.lower() in reserved for key, _ in request.query_params.multi_items()):
+                return JSONResponse({"detail": "Tenant and authorization claims are not accepted in query parameters."}, status_code=422, headers={"Cache-Control": "no-store"})
         if path in {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}:
             return JSONResponse({"detail": "Not found"}, status_code=404, headers={"Cache-Control": "no-store"})
         if path not in {"/", "/health", "/auth/login", "/auth/callback", "/auth/session"} and request.headers.get("authorization", "").lower().startswith("bearer "):
@@ -312,7 +354,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path in {"/", "/health", "/auth/login", "/auth/callback", "/auth/session"} and request.method in {"GET", "HEAD"}:
             response = await call_next(request)
         else:
-            principal = self.auth.load_principal(request.cookies.get(COOKIE_NAME))
+            try:
+                principal = self.auth.load_principal(request.cookies.get(COOKIE_NAME))
+            except (RuntimeError, SQLAlchemyError):
+                return JSONResponse({"detail": "Tenant membership authorization is unavailable."}, status_code=503, headers={"Cache-Control": "no-store"})
             if principal is None:
                 return JSONResponse({"detail": "Authentication required."}, status_code=401, headers={"Cache-Control": "no-store"})
             request.state.principal = principal
@@ -367,6 +412,8 @@ def install_auth_routes(app: FastAPI, auth: OIDCAuth | None) -> None:
             session_id = auth.complete_login(code, state, request.cookies.get(FLOW_COOKIE_NAME), request.cookies.get(COOKIE_NAME))
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail="This identity is not allowed.") from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail="Tenant membership authorization is unavailable.") from exc
         except Exception as exc:
             raise HTTPException(status_code=400, detail="OIDC callback validation failed.") from exc
         response = RedirectResponse("/", status_code=303, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
@@ -378,7 +425,10 @@ def install_auth_routes(app: FastAPI, auth: OIDCAuth | None) -> None:
         if auth is None:
             return {"authenticated": False, "auth_enabled": False}
         session_id = request.cookies.get(COOKIE_NAME)
-        principal = auth.load_principal(session_id)
+        try:
+            principal = auth.load_principal(session_id)
+        except (RuntimeError, SQLAlchemyError) as exc:
+            raise HTTPException(status_code=503, detail="Tenant membership authorization is unavailable.") from exc
         if principal is None:
             return {"authenticated": False, "auth_enabled": True}
         # Derive a stable synchronizer token from the opaque HttpOnly session secret.

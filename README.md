@@ -278,7 +278,7 @@ Bu ilk dilim mevcut kayıtları bir kullanıcıya migrate etmez ve endpoint'lere
 | Kalıcı arka plan kuyruğu | Yeni async API uçları ve ayrı tek sunucu işçisi kullanılabilir; sınırlı yeniden deneme ve başlangıç toparlaması uygulanır. |
 | Grup odası | 2–5 kayıtlı ajan açık sırayla bir tur katkı verir; seçilen moderatör katkılardan tek bir son yanıt üretir. Kuyruk ve çalışma izi kalıcıdır. |
 | Görev devri | İnsan-ajan sohbetinde en fazla bir alt görev tek yerel veya güvenilir A2A ajanına devredilir; üst/alt görev ilişkisi, hedef anlık görüntüsü, uzak kimlik/durum, sonuç ve olay izi saklanır. |
-| Auth/principal | Varsayılan kapalı, tek sabit OIDC legacy kimliğine sahip server session + CSRF kapısı; tenant migration #34 offline aracı PR #35 ile tamamlandı; default-off legacy-owner kaynak authorization #36 ayrı bir dilimdir. |
+| Auth/principal | Varsayılan kapalı OIDC server session + CSRF kapısı; offline tenant/role migrations #34/#92; role-based resource policy remains opt-in. |
 
 ### Giden A2A devri
 
@@ -292,7 +292,7 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 1. Auth/principal dilimi (#32, PR #33): varsayılan kapalı OIDC PKCE public-client login, browser-bound state, sabit tek legacy `iss/sub`, server session/CSRF kapısı. Bu, çok kullanıcılı erişim değildir ve tenant/resource izolasyonu içermez.
 2. Tenant migration (#34): offline SQLite migration kodu PR #35 ile tamamlandı; canlı backfill ve PostgreSQL doğrulaması release gate olarak açık.
-3. Resource authorization (#36): default-off tek legacy-owner route/mutation scope dilimi; tenant-admin/published-agent rol modeli sonraki ayrı dilimdir. Bu kontroller bitmeden gelen A2A'yı ve genel internet erişimini etkinleştirme.
+3. Resource authorization (#36/#92): default-off legacy-owner and optional tenant-role/published-agent policies. Migration is offline-only and SQLite validated; live backfill and PostgreSQL validation remain release gates.
 4. Dağıtık kuyruk kararını yalnızca ölçümler veya açık bir çok-host/yüksek erişilebilirlik gereksinimi mevcut tasarımı yetersiz kıldığında yeniden değerlendir: [karar ve ölçüm kapısı](docs/queue-scaling-decision.md).
 5. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
 
@@ -302,4 +302,4 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olur. Yerel tek kullanıcılı sohbet arayüzü ve tek sunuculu kalıcı görev kuyruğu kullanılabilir; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir.
 
-Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve oda oluşturma/geçmiş/çalıştırma izleme arayüzüyle sınırlı grup odası sunar. MCP salt okunur araç dilimi ve güvenilir hedeflere giden A2A 1.0 dilimi tamamlandı. Auth/principal varsayılan kapalı tek-kullanıcı OIDC kapısıdır. Issue #34 offline tenant migration kodu PR #35 ile tamamlandı; canlı backfill yapılmadı. Issue #36 varsayılan kapalı, yalnız SQLite legacy-owner kaynak yetkilendirmesini ekler; OIDC, mapping doğrulaması ve PostgreSQL/restore doğrulaması release gate olarak açık kalır. Bu dilim çok kullanıcılı rol/yayın politikasını etkinleştirmez. Dağıtık kuyruk ancak ölçülen yük bunu gerektirirse ele alınır.
+Mevcut dilimler API, yerel sohbet arayüzü, tek işçili kalıcı kuyruk ve oda oluşturma/geçmiş/çalıştırma izleme arayüzüyle sınırlı grup odası sunar. MCP salt okunur araç dilimi ve güvenilir hedeflere giden A2A 1.0 dilimi tamamlandı. Auth/principal varsayılan kapalı OIDC kapısıdır. Issue #34 offline tenant migration PR #35 ile tamamlandı; Issue #36 legacy-owner kaynak yetkilendirmesini, Issue #92 ise ayrı offline role migration ve tenant-role/published-agent policy'yi ekler. Her ikisi de varsayılan kapalıdır; canlı backfill ve PostgreSQL/restore doğrulaması release gate olarak açık kalır. Tasarım ve operasyon ayrıntıları [tenant role dokümanında](docs/tenant-roles.md). Dağıtık kuyruk ancak ölçülen yük bunu gerektirirse ele alınır.
