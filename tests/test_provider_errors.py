@@ -18,11 +18,18 @@ PROVIDERS = Path(__file__).resolve().parents[1] / "src" / "agent_runtime_platfor
 
 
 def _provider_modules() -> list[Path]:
-    # The OpenCode host package keeps its TypeScript dependencies under the
-    # provider directory. Installed packages are not provider modules, even
-    # when one of them ships Python sources.
+    """The modules on the model-call path: every ``provider.py`` and the registry.
+
+    Connection management (`connections.py`) is a separate operator surface
+    whose errors map to 404/422/503 at the API, not to ``provider_error``.
+    The OpenCode host package keeps its TypeScript dependencies under the
+    provider directory; installed packages are never provider modules.
+    """
     return sorted(
-        module for module in PROVIDERS.rglob("*.py") if "node_modules" not in module.parts
+        module
+        for module in PROVIDERS.rglob("*.py")
+        if "node_modules" not in module.parts
+        and module.name in {"provider.py", "_base.py", "_manifest.py", "_registry.py"}
     )
 
 

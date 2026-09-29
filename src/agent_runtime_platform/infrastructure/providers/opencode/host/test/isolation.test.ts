@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyPrivateUmask, configDirectory, preparePrivateHome } from "../src/isolation";
+import { applyPrivateUmask, configDirectory, preparePrivateHome, redirectConsoleToStderr } from "../src/isolation";
 
 describe("preparePrivateHome", () => {
   test("points the unset XDG roots at one private directory", () => {
@@ -72,6 +72,41 @@ describe("applyPrivateUmask", () => {
     } finally {
       process.umask(previous);
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("redirectConsoleToStderr", () => {
+  test("sends console writes to stderr, never stdout", () => {
+    const originalLog = console.log;
+    const originalInfo = console.info;
+    const originalDebug = console.debug;
+    const originalStderrWrite = process.stderr.write.bind(process.stderr);
+    const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+    const stderrWrites: string[] = [];
+    const stdoutWrites: string[] = [];
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderrWrites.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdoutWrites.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      redirectConsoleToStderr();
+      console.log("spawning process", { command: "mcp-server" });
+      console.info("diagnostic");
+      expect(stderrWrites.join("")).toContain("spawning process");
+      expect(stderrWrites.join("")).toContain("mcp-server");
+      expect(stderrWrites.join("")).toContain("diagnostic");
+      expect(stdoutWrites).toEqual([]);
+    } finally {
+      console.log = originalLog;
+      console.info = originalInfo;
+      console.debug = originalDebug;
+      process.stderr.write = originalStderrWrite as typeof process.stderr.write;
+      process.stdout.write = originalStdoutWrite as typeof process.stdout.write;
     }
   });
 });

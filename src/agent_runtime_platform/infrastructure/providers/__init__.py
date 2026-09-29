@@ -23,20 +23,23 @@ from agent_runtime_platform.infrastructure.providers._manifest import (
     supports_tool_ids,
 )
 from agent_runtime_platform.infrastructure.providers._registry import ProviderRegistry
-from agent_runtime_platform.infrastructure.providers.codex.provider import CodexChatProvider, list_codex_models
-from agent_runtime_platform.infrastructure.providers.openai.provider import OpenAIChatProvider
-from agent_runtime_platform.infrastructure.providers.opencode.provider import list_opencode_models
+from agent_runtime_platform.infrastructure.providers.opencode.connections import OpenCodeConnections
+from agent_runtime_platform.infrastructure.providers.opencode.provider import (
+    OpenCodeChatProvider,
+    list_opencode_integrations,
+    list_opencode_models,
+)
 
 __all__ = [
-    "CodexChatProvider",
     "HandoffRequest",
     "ModelOutput",
     "ModelProvider",
-    "OpenAIChatProvider",
+    "OpenCodeChatProvider",
+    "OpenCodeConnections",
     "ProviderError",
     "ProviderManifest",
     "ProviderRegistry",
-    "list_codex_models",
+    "list_opencode_integrations",
     "list_opencode_models",
     "load_manifest",
     "manifest_exists",

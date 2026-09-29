@@ -3,9 +3,11 @@
  *
  * One process, one call: start the SDK host, boot a location in a private
  * working directory, then either run one turn (create a session, make sure the
- * tool policy is in force, prompt, read the final assistant text) or read the
- * model catalog. Nothing is shared between calls; the process exits when the
- * call does.
+ * tool policy is in force, prompt, read the final assistant text), read the
+ * model catalog, or connect a provider integration. Nothing is shared between
+ * calls; the process exits when the call does. Credentials live in the data
+ * root the adapter points at `XDG_DATA_HOME`, which the adapter may keep
+ * across calls so a connection survives.
  */
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -20,11 +22,11 @@ import { createToolPolicyPlugin } from "./plugin";
 import {
   BRIDGE_AGENT_ID,
   POLICY_PLUGIN_ID,
-  TOOL_POLICY,
   assertToolPolicy,
-  type PermissionRule,
+  serverToolActions,
+  toolPolicy,
 } from "./policy";
-import { BridgeError, diagnosticLine, type CatalogModel } from "./protocol";
+import { BridgeError, diagnosticLine, type CatalogModel, type McpServerRequest } from "./protocol";
 import type { ToolDescriptor } from "./trace";
 import { createTraceMapper } from "./trace";
 import { extractFinalText, turnOutcome } from "./turn";
@@ -32,15 +34,21 @@ import { extractFinalText, turnOutcome } from "./turn";
 const READINESS_ATTEMPTS = 50;
 const READINESS_DELAY_MS = 200;
 
-/** The system prompt of the host that only reads the model catalog. */
-const CATALOG_SYSTEM = "The bridge host agent. It reads the model catalog and runs no turn.";
+/** The system prompt of the host that only reads catalogs. */
+const CATALOG_SYSTEM = "The bridge host agent. It reads the catalog and runs no turn.";
 
 /** One private OpenCode host: the SDK instance, its roots, and its cleanup. */
-interface PrivateHost {
+export interface PrivateHost {
   readonly opencode: Awaited<ReturnType<typeof OpenCode.create>>;
   readonly workDirectory: string;
   readonly toolCatalog: () => readonly ToolDescriptor[];
+  readonly refreshToolCatalog: () => Promise<readonly ToolDescriptor[]>;
   close(): Promise<void>;
+}
+
+/** The permission actions the turn's MCP grants resolve to. */
+export function grantedToolActions(servers: readonly McpServerRequest[]): string[] {
+  return servers.flatMap((server) => serverToolActions(server.name, server.tools));
 }
 
 /**
@@ -48,8 +56,13 @@ interface PrivateHost {
  *
  * The config directory is private, so the host never loads the invoking user's
  * OpenCode configuration, and the policy plugin is in place before any work.
+ * MCP servers are registered with exactly the granted tools; their credentials
+ * arrive through this process's environment, never through the request.
  */
-async function openPrivateHost(system: string): Promise<PrivateHost> {
+async function openPrivateHost(
+  system: string,
+  servers: readonly McpServerRequest[],
+): Promise<PrivateHost> {
   const privateRoot = mkdtempSync(join(tmpdir(), "agent-runtime-opencode-"));
   const workDirectory = join(privateRoot, "work");
   const privateConfig = configDirectory(process.env, privateRoot);
@@ -57,25 +70,28 @@ async function openPrivateHost(system: string): Promise<PrivateHost> {
   const previousCwd = process.cwd();
   process.chdir(workDirectory);
 
-  const { plugin, catalog } = createToolPolicyPlugin();
+  const allowedActions = grantedToolActions(servers);
+  const policy = toolPolicy(allowedActions);
+  const { plugin, catalog, refresh } = createToolPolicyPlugin(allowedActions);
   let opencode: Awaited<ReturnType<typeof OpenCode.create>>;
   try {
     opencode = await OpenCode.create({
-      // An empty tool catalog is the policy; see policy.ts. The agent carries
-      // the rules too, and `verifyPolicy` below re-checks the effective ones.
+      // The grant list is the policy; see policy.ts. The agent carries the
+      // rules too, and `verifyPolicy` below re-checks the effective ones.
       config: {
         directory: privateConfig,
         project: false,
         content: JSON.stringify({
-          permissions: TOOL_POLICY,
+          permissions: policy,
           agents: {
             [BRIDGE_AGENT_ID]: {
-              description: "The bridge host agent. It runs without tools.",
+              description: "The bridge host agent. It runs with the granted read-only MCP tools.",
               mode: "primary",
               system,
-              permissions: TOOL_POLICY,
+              permissions: policy,
             },
           },
+          ...mcpServerConfig(servers),
         }),
       },
       // The bundled model catalog is enough to resolve a model; no network
@@ -99,6 +115,7 @@ async function openPrivateHost(system: string): Promise<PrivateHost> {
     opencode,
     workDirectory,
     toolCatalog: catalog,
+    refreshToolCatalog: refresh,
     async close() {
       try {
         await opencode.close();
@@ -110,25 +127,74 @@ async function openPrivateHost(system: string): Promise<PrivateHost> {
   };
 }
 
+/**
+ * Start one private host and boot its location; the caller owns `close`.
+ *
+ * The location boots asynchronously and the host plugins are applied during
+ * that boot, so every caller waits for the bridge agent before it asks the
+ * host anything.
+ */
+export async function bootPrivateHost(
+  system: string,
+  servers: readonly McpServerRequest[] = [],
+): Promise<PrivateHost> {
+  const host = await openPrivateHost(system, servers);
+  try {
+    await createSession(host);
+    await waitForAgent(host.opencode);
+    return host;
+  } catch (error) {
+    await host.close().catch(() => {});
+    throw error;
+  }
+}
+
+async function createSession(
+  host: PrivateHost,
+  model?: { providerID: string; id: string; variant?: string },
+) {
+  return host.opencode.sessions.create({
+    location: { directory: host.workDirectory },
+    agent: BRIDGE_AGENT_ID,
+    ...(model === undefined ? {} : { model }),
+  });
+}
+
+/** The `mcp` section of the private config: local servers, values from the environment. */
+function mcpServerConfig(servers: readonly McpServerRequest[]): Record<string, unknown> {
+  if (servers.length === 0) return {};
+  const entries: Record<string, unknown> = {};
+  for (const server of servers) {
+    const environment: Record<string, string> = {};
+    for (const name of server.env_vars) {
+      const value = process.env[name];
+      if (value !== undefined && value !== "") environment[name] = value;
+    }
+    entries[server.name] = {
+      type: "local",
+      command: [server.command, ...server.args],
+      ...(server.cwd === undefined ? {} : { cwd: server.cwd }),
+      ...(Object.keys(environment).length === 0 ? {} : { environment }),
+    };
+  }
+  return { mcp: { servers: entries } };
+}
+
 export async function startTurnHost(options: TurnHostOptions): Promise<TurnHost> {
   const model = parseModelReference(options.model);
-  const host = await openPrivateHost(options.system);
+  const host = await openPrivateHost(options.system, options.mcpServers);
 
   try {
-    const session = await host.opencode.sessions.create({
-      location: { directory: host.workDirectory },
-      agent: BRIDGE_AGENT_ID,
-      model: {
-        providerID: model.providerID,
-        id: model.id,
-        ...(model.variant === undefined ? {} : { variant: model.variant }),
-      },
+    const allowedActions = grantedToolActions(options.mcpServers);
+    const session = await createSession(host, {
+      providerID: model.providerID,
+      id: model.id,
+      ...(model.variant === undefined ? {} : { variant: model.variant }),
     });
-
-    // A location boots asynchronously, and the host plugins (including this
-    // policy) are applied during that boot. Wait for the session's agent
-    // before re-checking the policy.
     await waitForAgent(host.opencode);
+    // A location boots asynchronously; MCP servers may still be connecting,
+    // so the granted tools are awaited before the policy is re-checked.
+    await waitForGrantedTools(host, allowedActions);
 
     return {
       async verifyPolicy() {
@@ -140,7 +206,7 @@ export async function startTurnHost(options: TurnHostOptions): Promise<TurnHost>
           );
         }
         const agent = await host.opencode.agent.get({ agentID: BRIDGE_AGENT_ID });
-        assertToolPolicy(agent.data.permissions as readonly PermissionRule[]);
+        assertToolPolicy(agent.data.permissions, allowedActions);
       },
 
       async prompt(text, onTrace) {
@@ -198,13 +264,8 @@ export async function startTurnHost(options: TurnHostOptions): Promise<TurnHost>
  * `model`.
  */
 export async function listModels(): Promise<CatalogModel[]> {
-  const host = await openPrivateHost(CATALOG_SYSTEM);
+  const host = await bootPrivateHost(CATALOG_SYSTEM);
   try {
-    await host.opencode.sessions.create({
-      location: { directory: host.workDirectory },
-      agent: BRIDGE_AGENT_ID,
-    });
-    await waitForAgent(host.opencode);
     const [models, fallback] = await Promise.all([
       host.opencode.model.list(),
       host.opencode.model.default(),
@@ -253,6 +314,23 @@ async function waitForAgent(
   throw new BridgeError(
     "provider",
     `The OpenCode host did not register the '${BRIDGE_AGENT_ID}' agent in time.`,
+  );
+}
+
+/** Wait until every granted tool is registered, so the model can call it. */
+async function waitForGrantedTools(
+  host: PrivateHost,
+  allowedActions: readonly string[],
+): Promise<void> {
+  if (allowedActions.length === 0) return;
+  for (let attempt = 0; attempt < READINESS_ATTEMPTS; attempt++) {
+    const registered = new Set((await host.refreshToolCatalog()).map((tool) => tool.id));
+    if (allowedActions.every((action) => registered.has(action))) return;
+    await new Promise((resolve) => setTimeout(resolve, READINESS_DELAY_MS));
+  }
+  throw new BridgeError(
+    "provider",
+    "The OpenCode host did not register the granted MCP tools in time.",
   );
 }
 

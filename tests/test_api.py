@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -12,9 +10,7 @@ from sqlalchemy import func, select
 from agent_runtime_platform.api.app import create_app
 from agent_runtime_platform.domain.models import HumanChatRun, Run, Task
 from agent_runtime_platform.infrastructure.providers import (
-    CodexChatProvider,
     HandoffRequest,
-    OpenAIChatProvider,
     ProviderError,
     ProviderRegistry,
 )
@@ -100,15 +96,14 @@ def test_agent_config_catalog_returns_safe_provider_metadata_only():
     provider = FakeProvider()
     app = create_app(
         database_url="sqlite:///:memory:",
-        providers=ProviderRegistry({"openai": provider, "codex": provider}),
+        providers=ProviderRegistry({"opencode": provider}),
     )
     with TestClient(app) as client:
         response = client.get("/agent-config/catalog")
         assert response.status_code == 200
         assert response.json() == {
             "providers": [
-                {"id": "codex", "supports_tool_ids": True, "model_catalog_url": "/codex/models"},
-                {"id": "openai", "supports_tool_ids": False, "model_catalog_url": None},
+                {"id": "opencode", "supports_tool_ids": True, "model_catalog_url": "/opencode/models"},
             ]
         }
         assert "command" not in response.text
@@ -696,154 +691,6 @@ def test_malformed_handoff_is_rejected_without_creating_a_child_task(client_and_
     assert len(run["tasks"]) == 1
     assert run["tasks"][0]["status"] == "failed"
     assert count_tasks(client) == 1
-
-
-def test_openai_provider_maps_only_an_explicit_tool_call_to_a_handoff(monkeypatch):
-    import langchain_openai
-
-    created: list[Any] = []
-
-    class StubChatOpenAI:
-        def __init__(self, model: str, api_key: str) -> None:
-            self.model = model
-            self.api_key = api_key
-            self.tools: list[dict[str, Any]] = []
-            self.index = len(created)
-            created.append(self)
-
-        def bind_tools(self, tools: list[dict[str, Any]]) -> "StubChatOpenAI":
-            self.tools = tools
-            return self
-
-        def invoke(self, messages: list[tuple[str, str]]) -> Any:
-            self.messages = messages
-            if self.index == 0:
-                return SimpleNamespace(
-                    content="",
-                    tool_calls=[
-                        {
-                            "name": "handoff_to_agent",
-                            "args": {"capability": " RESEARCH ", "task": "Find two sources."},
-                        }
-                    ],
-                )
-            return SimpleNamespace(content="Final answer", tool_calls=[])
-
-    monkeypatch.setattr(langchain_openai, "ChatOpenAI", StubChatOpenAI)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    registry = ProviderRegistry({"openai": OpenAIChatProvider()})
-    agent = {
-        "id": "agent-1",
-        "instructions": "You are a coordinator.",
-        "model_provider": "openai",
-        "model_name": "test-model",
-    }
-
-    action = registry.generate(agent, [{"role": "user", "content": "Research this."}], allow_handoff=True)
-    final = registry.generate(agent, [{"role": "user", "content": "Continue."}], allow_handoff=False)
-
-    assert action == HandoffRequest(capability="research", task="Find two sources.")
-    assert final == "Final answer"
-    assert created[0].tools[0]["name"] == "handoff_to_agent"
-    assert "You may use the handoff_to_agent tool once" in created[0].messages[0][1]
-    assert created[1].tools == []
-
-
-def test_codex_provider_uses_existing_login_without_api_key_and_bounded_handoff(monkeypatch):
-    import openai_codex
-
-    calls: list[dict[str, Any]] = []
-    replies = [
-        json.dumps(
-            {"type": "handoff", "content": "", "capability": " RESEARCH ", "task": "Find sources."}
-        ),
-        "Merhaba.",
-    ]
-
-    class StubCodex:
-        def __init__(self, config=None):
-            calls.append({"codex_config": config})
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            pass
-
-        def account(self):
-            return SimpleNamespace(account=SimpleNamespace(root=SimpleNamespace(type="chatgpt")))
-
-        def thread_start(self, **options):
-            self.thread_options = options
-            calls[-1].update(options)
-            return self
-
-        def turn(self, prompt, **options):
-            calls[-1]["prompt"] = prompt
-            calls[-1]["turn_options"] = options
-            response = replies.pop(0)
-            from openai_codex.generated.v2_all import (
-                AgentMessageThreadItem,
-                ItemCompletedNotification,
-                MessagePhase,
-                ThreadItem,
-                Turn,
-                TurnCompletedNotification,
-                TurnStatus,
-            )
-            from openai_codex.models import Notification
-
-            item = ThreadItem(root=AgentMessageThreadItem(
-                id="item-1", type="agentMessage", phase=MessagePhase.final_answer, text=response
-            ))
-            item_notification = Notification(
-                "item/completed",
-                ItemCompletedNotification(completedAtMs=1, item=item, threadId="thread-1", turnId="turn-1"),
-            )
-            turn_completed = Notification(
-                "turn/completed",
-                TurnCompletedNotification(
-                    threadId="thread-1",
-                    turn=Turn(id="turn-1", status=TurnStatus.completed, items=[item]),
-                ),
-            )
-            return SimpleNamespace(id="turn-1", stream=lambda: iter([item_notification, turn_completed]))
-
-    monkeypatch.setattr(openai_codex, "Codex", StubCodex)
-    monkeypatch.setattr(
-        "agent_runtime_platform.infrastructure.codex_home.prepare_codex_home",
-        lambda: Path("/tmp/test-codex-home"),
-    )
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    registry = ProviderRegistry({"codex": CodexChatProvider()})
-    agent = {
-        "id": "agent-1",
-        "instructions": "Answer in Turkish.",
-        "model_provider": "codex",
-        "model_name": "gpt-6-sol",
-        "model_reasoning_effort": "high",
-    }
-    history = [{"role": "user", "content": "Research this."}]
-
-    handoff = registry.generate(agent, history, allow_handoff=True)
-    response = registry.generate(agent, history)
-
-    assert handoff == HandoffRequest(capability="research", task="Find sources.")
-    assert response == "Merhaba."
-    assert calls[0]["turn_options"]["output_schema"]["properties"]["type"]["enum"] == [
-        "reply", "handoff"
-    ]
-    assert calls[1]["turn_options"] == {}
-    assert calls[0]["model"] == "gpt-6-sol"
-    assert calls[0]["sandbox"] == openai_codex.Sandbox.read_only
-    assert calls[0]["approval_mode"] == openai_codex.ApprovalMode.deny_all
-    assert calls[0]["config"]["model_reasoning_effort"] == "high"
-    assert calls[0]["config"]["features"]["shell_tool"] is False
-    assert calls[0]["config"]["features"]["unified_exec"] is False
-    assert calls[0]["config"]["web_search"] == "disabled"
-    assert calls[0]["ephemeral"] is True
-    assert not Path(calls[0]["cwd"]).exists()
-    assert "Research this." in calls[0]["prompt"]
 
 
 class _FakeA2AServer:

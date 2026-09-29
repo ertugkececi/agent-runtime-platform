@@ -25,7 +25,7 @@ class AgentCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=500)
     instructions: str = Field(min_length=1, max_length=20_000)
-    model_provider: str = Field(default="codex", min_length=1, max_length=40)
+    model_provider: str = Field(default="opencode", min_length=1, max_length=40)
     model_name: str = Field(min_length=1, max_length=160)
     model_reasoning_effort: Literal["low", "medium", "high", "xhigh", "max", "ultra"] | None = None
     enabled: bool = True
@@ -195,4 +195,40 @@ class HumanChatMessageCreate(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("Message content cannot be blank")
+        return value
+
+
+class OpenCodeConnectionCreate(BaseModel):
+    """Start one provider sign-in; the method is chosen when it is omitted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    integration: str = Field(min_length=1, max_length=80)
+    method: str | None = Field(default=None, min_length=1, max_length=120)
+    label: str | None = Field(default=None, min_length=1, max_length=120)
+
+    @field_validator("integration", "method", "label")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("Value cannot be blank")
+        return value
+
+
+class OpenCodeConnectionCode(BaseModel):
+    """The code the provider showed the human for a ``code``-mode sign-in."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("code")
+    @classmethod
+    def strip_code(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Code cannot be blank")
         return value

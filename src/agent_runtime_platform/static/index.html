@@ -82,6 +82,8 @@
       .chat-head .muted { margin: 3px 0 0; }
       #status { min-height: 18px; margin: 0; color: #718096; font-size: 12px; }
       #status.error { color: #b42318; }
+      #provider-connect { margin-top: 16px; border-top: 1px solid #e4e9f0; padding-top: 12px; }
+      #provider-connect-status.error { color: #b42318; }
       .messages { flex: 1; display: flex; flex-direction: column; gap: 16px; padding: 23px; overflow-y: auto; }
       .empty { max-width: 390px; margin: auto; text-align: center; color: #7b8798; font-size: 14px; line-height: 1.6; }
       .bubble-row { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
@@ -129,6 +131,8 @@
       [data-theme="dark"] .button.secondary:hover, [data-theme="dark"] .theme-toggle:hover { background: #354a63; }
       [data-theme="dark"] details, [data-theme="dark"] .chat-head, [data-theme="dark"] .composer { border-color: #354255; }
       [data-theme="dark"] #status.error { color: #ffa9a4; }
+      [data-theme="dark"] #provider-connect { border-color: #354255; }
+      [data-theme="dark"] #provider-connect-status.error { color: #ffa9a4; }
       [data-theme="dark"] .empty, [data-theme="dark"] .speaker { color: #b3c0d2; }
       [data-theme="dark"] .bubble { color: #f0f4fa; background: #2a384c; }
       [data-theme="dark"] .bubble-row.user .bubble { color: #fff; background: #395dbf; }
@@ -170,7 +174,21 @@
     <main id="conversation-workspace" class="layout">
       <aside class="panel">
         <div class="workspace-heading"><div><h1 id="workspace-title">Sohbet</h1><p class="muted" id="workspace-description">Bir ajan seç ve konuşmaya başla.</p></div></div>
-        <p class="muted">Codex sağlayıcısı sunucudaki ChatGPT girişini kullanır (<code>codex login status</code>).</p>
+        <section id="provider-connect" aria-label="Sağlayıcı bağlantısı">
+          <h2 style="font-size:15px; margin:0 0 8px;">Sağlayıcı bağlantısı</h2>
+          <p class="muted" id="provider-connect-status" role="status" aria-live="polite">Modeller OpenCode sağlayıcısından gelir.</p>
+          <label for="provider-integration">Bağlanacak sağlayıcı</label>
+          <select id="provider-integration" aria-label="Bağlanacak sağlayıcı"></select>
+          <button class="button secondary full" id="provider-connect-button" type="button">Bağlan</button>
+          <div id="provider-connect-details" hidden>
+            <p class="muted" id="provider-connect-instructions"></p>
+            <p class="muted"><code id="provider-connect-url"></code></p>
+            <label for="provider-connect-code">Doğrulama kodu (istenirse)</label>
+            <input id="provider-connect-code" maxlength="400" autocomplete="off" />
+            <button class="button full" id="provider-connect-code-button" type="button">Kodu gönder</button>
+            <button class="button secondary full" id="provider-connect-cancel-button" type="button">İptal</button>
+          </div>
+        </section>
         <div id="single-chat-tools">
         <label for="agent-select">Ajan</label>
         <select id="agent-select" aria-label="Sohbet edilecek ajan"></select>
@@ -348,7 +366,8 @@
       let conversationRetryTimer = 0;
       let agents = [];
       let allAgents = [];
-      let codexModels = [];
+      let modelCatalog = [];
+      let catalogProvider = "";
       let providerCatalog = [];
       let toolCatalog = [];
       const toolSelectionBaseline = new Map();
@@ -843,7 +862,7 @@
 
       const effortLabels = { low: "Düşük", medium: "Orta", high: "Yüksek", xhigh: "Çok yüksek", max: "Maksimum", ultra: "Ultra" };
       function updateEffortOptions() {
-        const model = document.getElementById("model-provider").value === "codex" ? codexModels.find((item) => item.id === modelSelect.value) : null;
+        const model = document.getElementById("model-provider").value === catalogProvider ? modelCatalog.find((item) => item.id === modelSelect.value) : null;
         effortSelect.replaceChildren();
         if (!model) {
           effortSelect.disabled = true;
@@ -862,8 +881,8 @@
       }
       modelSelect.addEventListener("change", updateEffortOptions);
       document.getElementById("model-provider").addEventListener("change", () => {
-        if (document.getElementById("model-provider").value !== "codex") return;
-        renderToolChoices("agent-tools", selectedToolIds("agent-tools"), "codex");
+        if (document.getElementById("model-provider").value !== catalogProvider) return;
+        renderToolChoices("agent-tools", selectedToolIds("agent-tools"), defaultProviderId());
         updateEffortOptions();
       });
 
@@ -875,12 +894,21 @@
         select.append(option);
       }
 
-      function fillProviderSelect(select, currentProvider = "codex") {
+      function defaultProviderId() {
+        const provider = providerCatalog.find((item) => item.model_catalog_url);
+        return provider ? provider.id : "opencode";
+      }
+
+      function providerSupportsTools(provider) {
+        return Boolean(providerCatalog.find((item) => item.id === provider)?.supports_tool_ids);
+      }
+
+      function fillProviderSelect(select, currentProvider = defaultProviderId()) {
         select.replaceChildren();
         for (const provider of providerCatalog) {
           const canChoose = Boolean(provider.model_catalog_url);
           addSelectOption(select, provider.id,
-            canChoose ? (provider.id === "codex" ? "Codex" : provider.id) : `${provider.id} (model kataloğu yok)`,
+            canChoose ? (provider.id === "opencode" ? "OpenCode" : provider.id) : `${provider.id} (model kataloğu yok)`,
             !canChoose && provider.id !== currentProvider);
         }
         if (!providerCatalog.some((provider) => provider.id === currentProvider)) {
@@ -892,7 +920,7 @@
       function renderToolChoices(containerId, selectedIds, provider) {
         const container = document.getElementById(containerId);
         container.replaceChildren();
-        const available = provider === "codex" ? toolCatalog.filter((tool) => tool.trusted_read_only) : [];
+        const available = providerSupportsTools(provider) ? toolCatalog.filter((tool) => tool.trusted_read_only) : [];
         for (const tool of available) {
           const label = document.createElement("label");
           label.className = "agent-tool-option";
@@ -932,7 +960,9 @@
         if (!container.childElementCount) {
           const note = document.createElement("p");
           note.className = "muted";
-          note.textContent = provider === "codex" ? "Yönetici tarafından onaylanmış salt okunur araç yok." : "MCP araçları yalnızca Codex sağlayıcısıyla kullanılabilir.";
+          note.textContent = providerSupportsTools(provider)
+            ? "Yönetici tarafından onaylanmış salt okunur araç yok."
+            : "Bu sağlayıcı MCP araçlarını desteklemiyor.";
           container.append(note);
         }
       }
@@ -950,6 +980,147 @@
         return (toolUnresolvedGrants.get(containerId) || []).some((id) => !toolRemovedGrantIds.has(`${containerId}:${id}`));
       }
 
+      const connectStatus = document.getElementById("provider-connect-status");
+      const connectIntegration = document.getElementById("provider-integration");
+      const connectButton = document.getElementById("provider-connect-button");
+      const connectDetails = document.getElementById("provider-connect-details");
+      const connectInstructions = document.getElementById("provider-connect-instructions");
+      const connectUrl = document.getElementById("provider-connect-url");
+      const connectCode = document.getElementById("provider-connect-code");
+      const connectCodeButton = document.getElementById("provider-connect-code-button");
+      const connectCancelButton = document.getElementById("provider-connect-cancel-button");
+      let connectMethods = new Map();
+      let activeConnectionId = "";
+      let connectPollTimer = 0;
+
+      function setConnectStatus(message, isError = false) {
+        connectStatus.textContent = message;
+        connectStatus.classList.toggle("error", isError);
+      }
+
+      async function loadProviderConnections() {
+        try {
+          const integrations = await request("/opencode/integrations");
+          connectMethods = new Map();
+          connectIntegration.replaceChildren();
+          for (const integration of Array.isArray(integrations) ? integrations : []) {
+            const methods = (integration.methods || []).filter((method) => method.type === "oauth");
+            if (!methods.length) continue;
+            const method = methods.find((item) => item.id.includes("headless")) || methods[0];
+            connectMethods.set(integration.id, method.id);
+            const option = document.createElement("option");
+            option.value = integration.id;
+            option.textContent = integration.connected ? `${integration.name} (bağlı)` : integration.name;
+            connectIntegration.append(option);
+          }
+          connectButton.disabled = !connectMethods.size;
+          setConnectStatus(connectMethods.size
+            ? "Bir sağlayıcı seçip bağlanabilirsin."
+            : "Bağlanabilir sağlayıcı bulunamadı.");
+        } catch (error) {
+          connectButton.disabled = true;
+          setConnectStatus(`Sağlayıcı bağlantı listesi alınamadı: ${error.message}`, true);
+        }
+      }
+
+      function stopConnectPolling() {
+        if (connectPollTimer) window.clearTimeout(connectPollTimer);
+        connectPollTimer = 0;
+      }
+
+      function showConnectDetails(attempt) {
+        activeConnectionId = attempt.attempt_id;
+        connectDetails.hidden = false;
+        connectInstructions.textContent = attempt.instructions || "";
+        connectUrl.textContent = attempt.url || "";
+        connectCode.hidden = attempt.mode !== "code";
+        connectCodeButton.hidden = attempt.mode !== "code";
+        connectCode.value = "";
+        connectCodeButton.disabled = attempt.mode !== "code";
+        connectButton.disabled = true;
+      }
+
+      function hideConnectDetails() {
+        stopConnectPolling();
+        activeConnectionId = "";
+        connectDetails.hidden = true;
+        connectButton.disabled = !connectMethods.size;
+      }
+
+      async function pollConnection() {
+        if (!activeConnectionId) return;
+        try {
+          const attempt = await request(`/opencode/connections/${encodeURIComponent(activeConnectionId)}`);
+          if (attempt.status === "complete") {
+            hideConnectDetails();
+            setConnectStatus("Sağlayıcı bağlantısı tamamlandı.");
+            await loadProviderConnections();
+            await loadModels();
+            return;
+          }
+          if (attempt.status === "failed") {
+            hideConnectDetails();
+            setConnectStatus(attempt.message || "Bağlantı tamamlanamadı.", true);
+            return;
+          }
+          setConnectStatus(attempt.mode === "code"
+            ? "Kodu sağlayıcının sayfasına gir, ardından buradan gönder."
+            : "Tarayıcıda onay bekleniyor…");
+          connectPollTimer = window.setTimeout(pollConnection, 2000);
+        } catch (error) {
+          hideConnectDetails();
+          setConnectStatus(error.message, true);
+        }
+      }
+
+      connectButton.addEventListener("click", async () => {
+        const integration = connectIntegration.value;
+        if (!integration) return;
+        connectButton.disabled = true;
+        setConnectStatus("Bağlantı başlatılıyor…");
+        try {
+          const attempt = await request("/opencode/connections", {
+            method: "POST",
+            body: JSON.stringify({ integration, method: connectMethods.get(integration) }),
+          });
+          showConnectDetails(attempt);
+          setConnectStatus(attempt.mode === "code"
+            ? "Kodu sağlayıcının sayfasına gir, ardından buradan gönder."
+            : "Tarayıcıda onay bekleniyor…");
+          connectPollTimer = window.setTimeout(pollConnection, 1500);
+        } catch (error) {
+          connectButton.disabled = false;
+          setConnectStatus(error.message, true);
+        }
+      });
+
+      connectCodeButton.addEventListener("click", async () => {
+        if (!activeConnectionId || !connectCode.value.trim()) return;
+        connectCodeButton.disabled = true;
+        try {
+          await request(`/opencode/connections/${encodeURIComponent(activeConnectionId)}/code`, {
+            method: "POST",
+            body: JSON.stringify({ code: connectCode.value.trim() }),
+          });
+          setConnectStatus("Kod gönderildi; onay bekleniyor…");
+        } catch (error) {
+          connectCodeButton.disabled = false;
+          setConnectStatus(error.message, true);
+        }
+      });
+
+      connectCancelButton.addEventListener("click", async () => {
+        if (activeConnectionId) {
+          try {
+            await request(`/opencode/connections/${encodeURIComponent(activeConnectionId)}`, { method: "DELETE" });
+          } catch (_error) {
+            // The attempt may already be gone; cancelling is still the intent.
+          }
+        }
+        hideConnectDetails();
+        setConnectStatus("Bağlantı iptal edildi.");
+      });
+
       async function loadAgentConfigCatalog() {
         const [catalogResult, toolsResult] = await Promise.allSettled([
           request("/agent-config/catalog"),
@@ -959,12 +1130,12 @@
         providerCatalog = Array.isArray(catalogResult.value.providers) ? catalogResult.value.providers : [];
         toolCatalog = toolsResult.status === "fulfilled" && Array.isArray(toolsResult.value)
           ? toolsResult.value : [];
-        fillProviderSelect(document.getElementById("model-provider"), "codex");
-        renderToolChoices("agent-tools", [], "codex");
+        fillProviderSelect(document.getElementById("model-provider"), defaultProviderId());
+        renderToolChoices("agent-tools", [], defaultProviderId());
       }
 
       function updateEditEffortOptions(agent, selectedEffort) {
-        const model = codexModels.find((item) => item.id === editModelSelect.value);
+        const model = modelCatalog.find((item) => item.id === editModelSelect.value);
         editEffortSelect.replaceChildren();
         if (selectedEffort === null) addSelectOption(editEffortSelect, "", "Model varsayılanı (kayıtlı ayar)");
         if (selectedEffort && !model?.efforts.includes(selectedEffort)) {
@@ -975,22 +1146,22 @@
         }
         if (!editEffortSelect.options.length) addSelectOption(editEffortSelect, "", "Model varsayılanı (kayıtlı ayar)");
         editEffortSelect.value = selectedEffort || "";
-        editEffortSelect.disabled = agent.model_provider !== "codex" || !model;
+        editEffortSelect.disabled = agent.model_provider !== catalogProvider || !model;
       }
 
       function renderEditModelOptions(agent, selectedModel = agent.model_name, selectedEffort = agent.model_reasoning_effort) {
         editModelSelect.replaceChildren();
-        if (!codexModels.some((item) => item.id === selectedModel)) {
+        if (!modelCatalog.some((item) => item.id === selectedModel)) {
           addSelectOption(editModelSelect, selectedModel, `${selectedModel} (kayıtlı model)`);
         }
-        for (const model of codexModels) {
+        for (const model of modelCatalog) {
           addSelectOption(editModelSelect, model.id, `${model.label} (${model.id})`);
         }
         editModelSelect.value = selectedModel;
-        editModelSelect.disabled = agent.model_provider !== "codex" || !codexModels.length;
+        editModelSelect.disabled = agent.model_provider !== catalogProvider || !modelCatalog.length;
         updateEditEffortOptions(agent, selectedEffort);
-        document.getElementById("edit-agent-hint").textContent = agent.model_provider !== "codex"
-          ? "Bu sağlayıcı için model kataloğu yok; diğer ajan alanları düzenlenebilir. Codex'e geçersen katalogdaki modelleri seçebilirsin."
+        document.getElementById("edit-agent-hint").textContent = agent.model_provider !== catalogProvider
+          ? "Bu sağlayıcı için model kataloğu yok; diğer ajan alanları düzenlenebilir. OpenCode'a geçersen katalogdaki modelleri seçebilirsin."
           : "Değişiklikler sonraki yanıtta geçerli olur.";
       }
 
@@ -1052,13 +1223,13 @@
         if (!agent) return;
         const provider = editProviderSelect.value;
         renderToolChoices("edit-agent-tools", provider === agent.model_provider ? (agent.tool_ids || []) : [], provider);
-        const defaultModel = provider === "codex" ? codexModels.find((item) => item.id === agent.model_name) || codexModels[0] : null;
+        const defaultModel = provider === catalogProvider ? modelCatalog.find((item) => item.id === agent.model_name) || modelCatalog[0] : null;
         renderEditModelOptions({ ...agent, model_provider: provider }, defaultModel?.id || agent.model_name, provider === agent.model_provider ? agent.model_reasoning_effort : defaultModel?.default_effort || null);
       });
 
       editModelSelect.addEventListener("change", () => {
         const agent = allAgents.find((item) => item.id === managedAgentId);
-        const model = codexModels.find((item) => item.id === editModelSelect.value);
+        const model = modelCatalog.find((item) => item.id === editModelSelect.value);
         if (agent && model) {
           const effort = editProviderSelect.value === agent.model_provider && model.id === agent.model_name
             ? agent.model_reasoning_effort : model.default_effort || model.efforts[0] || null;
@@ -1067,11 +1238,14 @@
       });
       document.getElementById("reset-agent-button").addEventListener("click", renderEditAgent);
 
-      async function loadCodexModels() {
-        const models = await request("/codex/models");
-        if (!Array.isArray(models) || !models.length) throw new Error("Seçilebilir Codex modeli bulunamadı.");
-        codexModels = models;
-        fillProviderSelect(document.getElementById("model-provider"), "codex");
+      async function loadModels() {
+        const provider = providerCatalog.find((item) => item.model_catalog_url);
+        if (!provider) throw new Error("Model kataloğu olan sağlayıcı bulunamadı.");
+        const models = await request(provider.model_catalog_url);
+        if (!Array.isArray(models) || !models.length) throw new Error("Seçilebilir model bulunamadı.");
+        modelCatalog = models;
+        catalogProvider = provider.id;
+        fillProviderSelect(document.getElementById("model-provider"), defaultProviderId());
         modelSelect.replaceChildren();
         for (const model of models) {
           const option = document.createElement("option");
@@ -1079,8 +1253,7 @@
           option.textContent = `${model.label} (${model.id})`;
           modelSelect.append(option);
         }
-        modelSelect.value = models.find((model) => model.id === "gpt-6-sol")?.id
-          || models.find((model) => model.is_default)?.id || models[0].id;
+        modelSelect.value = models.find((model) => model.is_default)?.id || models[0].id;
         modelSelect.disabled = false;
         updateEffortOptions();
         createAgentButton.disabled = effortSelect.disabled;
@@ -1332,7 +1505,7 @@
         if (enabled !== Boolean(agent.enabled)) changes.enabled = enabled;
         if (provider !== agent.model_provider) changes.model_provider = provider;
         if (toolsChanged) changes.tool_ids = toolIds;
-        if (provider === "codex") {
+        if (provider === catalogProvider) {
           const modelName = editModelSelect.value;
           const effort = editEffortSelect.value;
           if (modelName !== agent.model_name && !effort) {
@@ -1561,7 +1734,7 @@
 
       initializeAuth().then((allowed) => {
         if (!allowed) return;
-        return loadAgentConfigCatalog().then(() => loadAgents()).then(loadCodexModels).then(() => {
+        return loadAgentConfigCatalog().then(loadProviderConnections).then(() => loadAgents()).then(loadModels).then(() => {
           const initialScreen = screenFromHash()
             || (!agents.length ? "new-agent" : localStorage.getItem("agentRuntimeViewMode") === "room" ? "rooms" : "chat");
           setAppScreen(initialScreen);

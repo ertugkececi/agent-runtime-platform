@@ -63,6 +63,35 @@ export function applyPrivateUmask(): number {
 }
 
 /**
+ * Send every console write to stderr; stdout is the bridge's record stream.
+ *
+ * SDK internals log through the console (the MCP spawner, for one), and a
+ * single console line on stdout would corrupt the NDJSON stream. Stderr is
+ * diagnostic only, as the contract says, so library diagnostics stay visible
+ * without ever touching the protocol.
+ */
+export function redirectConsoleToStderr(): void {
+  const write = (...values: readonly unknown[]) => {
+    const text = values
+      .map((value) => (typeof value === "string" ? value : inspect(value)))
+      .join(" ");
+    process.stderr.write(`${text}\n`);
+  };
+  for (const method of ["log", "info", "debug"] as const) {
+    console[method] = write;
+  }
+}
+
+function inspect(value: unknown): string {
+  if (value instanceof Error) return String(value);
+  try {
+    return typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
  * The config root the host reads. The environment's private config root wins -
  * that is the mechanism the adapter uses - and a private directory under
  * `fallbackRoot` is used when there is none, so the invoking user's

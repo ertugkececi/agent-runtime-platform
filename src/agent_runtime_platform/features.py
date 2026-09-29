@@ -54,17 +54,7 @@ class FeatureFlag:
         return PREFIX + self.name.upper()
 
 
-FLAGS: dict[str, FeatureFlag] = {
-    "provider_opencode": FeatureFlag(
-        name="provider_opencode",
-        default=False,
-        description=(
-            "Register the OpenCode model provider and expose its model catalog. "
-            "Consumed by the provider module and the bridge host."
-        ),
-        owner="providers",
-    ),
-}
+FLAGS: dict[str, FeatureFlag] = {}
 
 
 def _flag(name: str) -> FeatureFlag:

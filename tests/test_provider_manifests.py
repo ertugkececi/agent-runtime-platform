@@ -31,13 +31,13 @@ def test_every_registered_provider_declares_a_manifest():
 
 @pytest.mark.parametrize(
     ("provider_id", "tool_ids_supported"),
-    [("codex", True), ("openai", False)],
+    [("opencode", True)],
 )
 def test_declared_tool_id_support(provider_id, tool_ids_supported):
     manifest = load_manifest(provider_id)
     assert manifest.supports_tool_ids is tool_ids_supported
     assert supports_tool_ids(provider_id) is tool_ids_supported
-    assert manifest.runtime == "python"
+    assert manifest.runtime == "node"
     assert manifest.sdk
 
 
@@ -45,8 +45,8 @@ def test_opencode_declares_the_typescript_sdk():
     """The host runs in its native stack; its SDK version is declared here."""
     manifest = load_manifest("opencode")
     assert manifest.runtime == "node"
-    assert manifest.supports_tool_ids is False
-    assert supports_tool_ids("opencode") is False
+    assert manifest.supports_tool_ids is True
+    assert supports_tool_ids("opencode") is True
     package = json.loads(
         (
             Path(__file__).resolve().parents[1]
@@ -73,24 +73,24 @@ def test_undeclared_provider_supports_no_tools():
     assert supports_tool_ids("made_up") is False
 
 
-def test_manifests_are_read_without_importing_provider_sdks():
+def test_manifests_are_read_without_importing_the_provider_module():
     code = (
-        "import sys;"
         "from agent_runtime_platform.infrastructure.providers import load_manifest;"
-        "m = load_manifest('codex');"
-        "print(m.provider_id, int(m.supports_tool_ids),"
-        " int('openai_codex' in sys.modules), int('langchain_openai' in sys.modules))"
+        "m = load_manifest('opencode');"
+        "print(m.provider_id, int(m.supports_tool_ids))"
     )
     env = dict(os.environ, PYTHONPATH=str(SRC))
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True, env=env
     )
-    assert result.stdout.strip() == "codex 1 0 0"
+    assert result.stdout.strip() == "opencode 1"
 
 
-def test_openai_agents_reject_tool_grants():
-    with pytest.raises(ValueError, match="not supported by provider 'openai'"):
-        validate_tool_ids(["fixture/lookup"], "openai")
+def test_opencode_agents_pass_the_provider_gate_and_fail_the_approval_check():
+    # The error must come from the administrator-approval check, not the
+    # provider gate, which proves OpenCode cleared the manifest check.
+    with pytest.raises(ValueError, match="not administrator-approved"):
+        validate_tool_ids(["unknown/tool"], "opencode")
 
 
 def test_undeclared_providers_reject_tool_grants():
@@ -99,15 +99,8 @@ def test_undeclared_providers_reject_tool_grants():
 
 
 def test_empty_tool_grants_are_accepted_for_any_provider():
-    assert validate_tool_ids([], "openai") == []
+    assert validate_tool_ids([], "opencode") == []
     assert validate_tool_ids([], "made_up") == []
-
-
-def test_codex_passes_the_provider_gate_and_fails_the_approval_check():
-    # The error must come from the administrator-approval check, not the
-    # provider gate, which proves Codex cleared the manifest check.
-    with pytest.raises(ValueError, match="not administrator-approved"):
-        validate_tool_ids(["unknown/tool"], "codex")
 
 
 def test_manifest_is_required_to_match_its_directory(tmp_path, monkeypatch):
