@@ -878,7 +878,7 @@
       function fillProviderSelect(select, currentProvider = "codex") {
         select.replaceChildren();
         for (const provider of providerCatalog) {
-          const canChoose = provider.model_catalog_available;
+          const canChoose = Boolean(provider.model_catalog_url);
           addSelectOption(select, provider.id,
             canChoose ? (provider.id === "codex" ? "Codex" : provider.id) : `${provider.id} (model kataloğu yok)`,
             !canChoose && provider.id !== currentProvider);

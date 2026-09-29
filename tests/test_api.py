@@ -107,8 +107,8 @@ def test_agent_config_catalog_returns_safe_provider_metadata_only():
         assert response.status_code == 200
         assert response.json() == {
             "providers": [
-                {"id": "codex", "model_catalog_available": True},
-                {"id": "openai", "model_catalog_available": False},
+                {"id": "codex", "supports_tool_ids": True, "model_catalog_url": "/codex/models"},
+                {"id": "openai", "supports_tool_ids": False, "model_catalog_url": None},
             ]
         }
         assert "command" not in response.text
