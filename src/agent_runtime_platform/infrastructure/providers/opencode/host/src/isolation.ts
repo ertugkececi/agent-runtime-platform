@@ -104,3 +104,17 @@ export function configDirectory(
   const configured = env["XDG_CONFIG_HOME"]?.trim();
   return configured ? join(configured, "opencode") : join(fallbackRoot, "opencode");
 }
+
+/**
+ * The data root the host writes its database to. The adapter points
+ * `XDG_DATA_HOME` at the persistent, app-owned root, so the embedded host must
+ * keep its SQLite database on disk there - the SDK would default to an
+ * in-memory database, which loses every credential when the process exits.
+ */
+export function dataDirectory(
+  env: Record<string, string | undefined> = process.env,
+  fallbackRoot: string = tmpdir(),
+): string {
+  const configured = env["XDG_DATA_HOME"]?.trim();
+  return configured ? join(configured, "opencode") : join(fallbackRoot, "opencode");
+}
