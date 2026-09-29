@@ -1,16 +1,16 @@
 # Handover
 
-Written 2026-09-28 so this work can continue from another machine without
-re-deriving context. The GitHub issues are the plan; this file only records
-things that are not yet written down anywhere else.
+Written 2026-09-28, updated 2026-09-29 so this work can continue from another
+machine without re-deriving context. The GitHub issues are the plan; this file
+only records things that are not yet written down anywhere else.
 
 ## Where the work is tracked
 
 | Epic | Scope | State |
 | --- | --- | --- |
 | **#66** | Backend skeleton and contract foundation | **complete (7/7)** |
-| **#67** | OpenCode model provider | next — sub-issues #77–#83 |
-| **#68** | Frontend (React console) | not started — #84–#91 |
+| **#67** | OpenCode model provider | **complete (7/7)** |
+| **#68** | Frontend (React console) | next — sub-issues #84–#91 |
 | **#69** | Security and assurance | not started — #92–#95 |
 
 Follow-ups found while working: **#98** (a2a poll deadline), **#103** (layered
@@ -27,41 +27,38 @@ request **#39** lands.
 - `docs/architecture/repo-and-package-boundaries.md` records the boundary rule (#76).
 - `tests/test_provider_errors.py` guards the provider error family (#75).
 - `AGENTS.md` records how work is expected to be done here.
+- The OpenCode model provider is on `main`, default-off behind
+  `AGENT_RUNTIME_FEATURE_PROVIDER_OPENCODE` (#81, #82). It exposes
+  `GET /opencode/models`, runs one short-lived TypeScript host process per call
+  in a private `0700` home that never reads `~/.config/opencode`, and bounds
+  every call with `AGENT_RUNTIME_OPENCODE_TIMEOUT_SECONDS` (default 600 s,
+  capped at 3600 s). `docs/opencode-provider.md` is the setup and limits
+  reference (#83).
 
-## Next: Epic #67 — OpenCode provider
+## Next: Epic #68 — React console
 
-Decisions already taken. Do not re-litigate them; #77 records the reasoning.
+Epic #67 is delivered. The local single-file interface moves to the separate
+`agent-runtime-console` repository: Vite + React + TypeScript, with the API
+client generated from `contracts/openapi.json`, never hand-written. The
+sub-issues are worked in this order:
 
-1. **Official SDK only.** `@opencode/sdk`, in its native TypeScript stack. No
-   hand-written REST wrapper, no Python bridge, no CLI shortcut.
-2. **Per-call runner, not a daemon.** The Python adapter starts a short-lived
-   TypeScript program per turn: JSON request on stdin, then `OpenCode.create()`,
-   `sessions.prompt()`, and a JSON result plus events on stdout, then exit. This
-   mirrors how the Codex provider already works (`tempfile` plus `with Codex(...)`).
-   A long-lived host is deferred until a measurement asks for it.
-3. **`tool_ids` are refused in the first slice** with an explicit `422`, exactly
-   as the OpenAI provider does. MCP mapping is a separate change.
-4. **Isolation.** OpenCode must not inherit the user's `~/.config/opencode`. Use a
-   private directory with `0700`/`0600`, the way `codex_home.py` does for Codex.
-5. **Order.** #77 (bridge contract) → #78 (TypeScript package) → #79 (its CI job)
-   → #80 (Python adapter) → #81 (`GET /opencode/models`) → #82 (isolation and
-   secret minimisation) → #83 (tests and documentation).
+**#84 → #85 → #86 → #87 → #88 → #89 → #90 → #91**
 
-What #77 must pin down: the stdin/stdout JSON shape; the event stream carrying
-only `{server, tool, status, phase}` and never tool arguments or results; the
-error shape; and a bridge protocol version with a compatibility rule.
-
-The flag that will gate all of it already exists: `AGENT_RUNTIME_FEATURE_PROVIDER_OPENCODE`
-(`provider_opencode` in `features.py`), default off.
+The dependency behind #87 is satisfied: PR #45 has merged, so the agent
+definition field work is no longer blocked.
 
 ## Environment notes
 
 - The machine this work started on blocked `uv.exe` and `ruff.exe` through
   corporate application control, so `uv` never ran there. Python came from the
   MSI installer and dependencies from `pip install -e ".[dev]"`.
-- **`uv.lock` was therefore never regenerated.** Nothing in it is stale today
-  because no dependency was added. If you add one, run `uv lock` and commit the
-  result: CI installs with `uv sync --extra dev --locked`.
+- **`uv.lock` has still never been regenerated** — Epic #67 added no Python
+  dependency. Nothing in it is stale today. If you add one, run `uv lock` and
+  commit the result: CI installs with `uv sync --extra dev --locked`.
+- **`bun` is needed only for real OpenCode turns and catalog reads.** The
+  Python tests run against `tests/fixtures/fake_opencode_host.py` and need no
+  bun install; the host package's own suite is the separate `opencode-host` CI
+  job.
 - CI on Linux is the authority for the test suite. Windows cannot run the
   `fcntl`, `os.fchmod` and file-mode tests, and a timing-sensitive a2a test is
   unreliable there; all of them pass on Linux.
