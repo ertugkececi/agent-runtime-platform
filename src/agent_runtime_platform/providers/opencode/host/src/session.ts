@@ -24,7 +24,7 @@ import {
   assertToolPolicy,
   type PermissionRule,
 } from "./policy";
-import { BridgeError, type CatalogModel } from "./protocol";
+import { BridgeError, diagnosticLine, type CatalogModel } from "./protocol";
 import type { ToolDescriptor } from "./trace";
 import { createTraceMapper } from "./trace";
 import { extractFinalText, turnOutcome } from "./turn";
@@ -83,8 +83,9 @@ async function openPrivateHost(system: string): Promise<PrivateHost> {
       models: { fetch: false },
       log: {
         level: "warn",
-        emit: (entry) =>
-          process.stderr.write(`opencode-host ${entry.level}: ${entry.message}\n`),
+        // Only the severity reaches stderr, never the SDK's message or
+        // attributes: those may carry prompts, tool arguments, or results.
+        emit: (entry) => process.stderr.write(diagnosticLine(entry)),
       },
       plugins: [plugin],
     });

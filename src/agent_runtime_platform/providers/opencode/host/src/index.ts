@@ -9,8 +9,9 @@
 
 import { readFileSync } from "node:fs";
 
-import { preparePrivateHome } from "./isolation";
+import { applyPrivateUmask, preparePrivateHome } from "./isolation";
 
+applyPrivateUmask();
 const home = preparePrivateHome();
 
 let exitCode = 1;

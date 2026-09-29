@@ -112,6 +112,20 @@ export interface ErrorRecord {
 
 export type BridgeRecord = HelloRecord | EventRecord | ResultRecord | ErrorRecord;
 
+/** The part of an SDK log entry the host is willing to see. */
+export interface DiagnosticEntry {
+  readonly level: string;
+}
+
+/**
+ * The one stderr line an SDK log entry produces: its severity, and nothing
+ * else. SDK messages and attributes may carry tool arguments, tool results,
+ * prompts, or credentials, and the bridge never logs any of those.
+ */
+export function diagnosticLine(entry: DiagnosticEntry): string {
+  return `opencode-host ${entry.level}\n`;
+}
+
 /**
  * An error whose message is written by this host, not echoed from the SDK.
  *

@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   BRIDGE_PROTOCOL,
   BridgeError,
+  diagnosticLine,
   hello,
   isCompatible,
   parseRequest,
@@ -42,6 +43,17 @@ describe("isCompatible", () => {
     for (const version of [0, 2, 3, -1, 1.5]) {
       expect(isCompatible(version)).toBe(false);
     }
+  });
+});
+
+describe("diagnosticLine", () => {
+  test("writes the severity and nothing an SDK entry carries", () => {
+    const entry = {
+      level: "warn",
+      message: "tool shell failed with sk-secret-value",
+      attributes: { api_key: "sk-secret-value", input: { command: "rm -rf /" } },
+    };
+    expect(diagnosticLine(entry)).toBe("opencode-host warn\n");
   });
 });
 
