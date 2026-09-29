@@ -10,12 +10,13 @@ only records things that are not yet written down anywhere else.
 | --- | --- | --- |
 | **#66** | Backend skeleton and contract foundation | **complete (7/7)** |
 | **#67** | OpenCode model provider | **complete (7/7)** |
-| **#68** | Frontend (React console) | next — sub-issues #84–#91 |
-| **#69** | Security and assurance | not started — #92–#95 |
+| **#68** | Frontend (React console) | **complete (8/8)** |
+| **#69** | Security and assurance | next — sub-issues #92–#95 |
 
-Follow-ups found while working: **#98** (a2a poll deadline), **#103** (layered
-directories), **#104** (mypy gate). **#38** stays open until the draft pull
-request **#39** lands.
+Follow-ups found while working: **#103** (layered directories) and **#104**
+(mypy gate); **#98** (a2a poll deadline) is closed. **#38** and its draft pull
+request **#39** are both closed (decision 2026-09-29): the tenant-role work is
+re-implemented in **#92**.
 
 ## What is on `main` now
 
@@ -34,18 +35,23 @@ request **#39** lands.
   every call with `AGENT_RUNTIME_OPENCODE_TIMEOUT_SECONDS` (default 600 s,
   capped at 3600 s). `docs/opencode-provider.md` is the setup and limits
   reference (#83).
+- The React console lives in the separate `agent-runtime-console` repository:
+  Vite + React + TypeScript, with its API client generated from
+  `contracts/openapi.json` (`openapi-typescript` + `openapi-fetch`), plus the
+  design system and accessibility work (#84–#91; console PRs #1–#8).
 
-## Next: Epic #68 — React console
+## Next: Epic #69 — Security and assurance
 
-Epic #67 is delivered. The local single-file interface moves to the separate
-`agent-runtime-console` repository: Vite + React + TypeScript, with the API
-client generated from `contracts/openapi.json`, never hand-written. The
-sub-issues are worked in this order:
+Epic #68 is delivered: the frontend is complete in the separate
+`agent-runtime-console` repository and no further frontend work is planned
+here. Epic #69 collects the security and assurance work; the sub-issues are
+worked in this order:
 
-**#84 → #85 → #86 → #87 → #88 → #89 → #90 → #91**
+**#92 → #93 → #94 → #95**
 
-The dependency behind #87 is satisfied: PR #45 has merged, so the agent
-definition field work is no longer blocked.
+#92 re-applies the tenant-role and published-agent policy from the closed
+#38/#39, default-off, and keeps OIDC/mapping plus PostgreSQL/restore
+verification as release gates, collected in #93.
 
 ## Environment notes
 
