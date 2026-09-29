@@ -1,6 +1,6 @@
 # Agent Runtime Platform
 
-> **Durum:** Ajanlar arası mesajlaşma, yeteneğe göre keşif, yerel insan-ajan sohbeti, sınırlandırılmış grup odası/özet akışı, tek alt görev devri ve kalıcı tek sunucu işçisi kullanılabilir. Varsayılan model sağlayıcısı ChatGPT oturumuyla çalışan Codex'tir.
+> **Durum:** Ajanlar arası mesajlaşma, yeteneğe göre keşif, yerel insan-ajan sohbeti, sınırlandırılmış grup odası/özet akışı, tek alt görev devri ve kalıcı tek sunucu işçisi kullanılabilir. Model erişimi OpenCode sağlayıcısı üzerindendir; ChatGPT aboneliği dahil sağlayıcı bağlantıları uygulama içinden kurulur.
 
 Agent Runtime Platform, yapay zekâ ajanlarını çalışma anında tanımlayıp yönetmek, yeteneklerine göre bulmak ve birbirleriyle izlenebilir biçimde konuşturmak için tasarlanan bir platformdur. Yeni bir ajan eklemek veya devre dışı bırakmak, her seferinde uygulama kodunu değiştirmeyi gerektirmemelidir.
 
@@ -18,7 +18,7 @@ Bir kullanıcı arayüzünden veya API'den ajan oluştur; modele, talimatlara, y
 - İnsan-ajan sohbetinde bir alt görevi, tam yetenek eşleşmesiyle bulunan tek etkin ajana devretme; bir istekte en fazla bir devir yapılır.
 - Çalıştırma durumlarını, kullanılan ajan yapılandırması anlık görüntülerini ve sıralı olay izlerini API üzerinden görüntüleme.
 
-Sınırlı grup odası API’si kullanılabilir. Salt okunur MCP araçları, yalnızca Codex sağlayıcısında ve sunucu yöneticisinin tanımladığı yerel stdio sunucularından etkinleştirilebilir. Sunucu yöneticisi ayrıca belirli yetenekleri uzak A2A 1.0 HTTP+JSON ajanlarına eşleyebilir; yalnızca mevcut tek alt görev devri bu güvenilir katalog üzerinden uzak hedefe gider. MCP sunucularını ve izinli araç adlarını HTTP API’sine göndermek mümkün değildir.
+Sınırlı grup odası API’si kullanılabilir. Salt okunur MCP araçları, OpenCode sağlayıcısıyla ve sunucu yöneticisinin tanımladığı yerel stdio sunucularından etkinleştirilebilir. Sunucu yöneticisi ayrıca belirli yetenekleri uzak A2A 1.0 HTTP+JSON ajanlarına eşleyebilir; yalnızca mevcut tek alt görev devri bu güvenilir katalog üzerinden uzak hedefe gider. MCP sunucularını ve izinli araç adlarını HTTP API’sine göndermek mümkün değildir.
 
 ## Kavramsal mimari
 
@@ -72,15 +72,15 @@ Yönlendirme, izin ve limit kontrolleri öngörülebilir kurallarla çalışır.
 }
 ```
 
-Bu JSON hedeflenen ajan sözleşmesini gösterir. API'deki tool_ids, /mcp/tools yanıtında listelenen sunucu/araç kimliklerinden seçilir. MCP sunucu komutları, argümanları, ortam değişkeni adları ve yönetici tarafından salt okunur olduğu onaylanan araçlar yalnızca AGENT_RUNTIME_MCP_SERVERS sunucu ortam değişkeninden yüklenir. İstek gövdesiyle komut, URL, yol veya ortam değeri kaydedilemez. OpenAI sağlayıcısı tool_ids kabul etmez; istek açık bir 422 hatası alır.
+Bu JSON hedeflenen ajan sözleşmesini gösterir. API'deki tool_ids, /mcp/tools yanıtında listelenen sunucu/araç kimliklerinden seçilir. MCP sunucu komutları, argümanları, ortam değişkeni adları ve yönetici tarafından salt okunur olduğu onaylanan araçlar yalnızca AGENT_RUNTIME_MCP_SERVERS sunucu ortam değişkeninden yüklenir. İstek gövdesiyle komut, URL, yol veya ortam değeri kaydedilemez. Kapsam dışı bir araç isteği açık bir 422 hatası alır.
 
-Arayüz yalnızca ajan API'sinin desteklediği alanları düzenler: ad, açıklama, talimatlar, sağlayıcı/model (Codex model kataloğu mevcut olduğu için katalogdaki Codex seçenekleri), düşünme eforu, yetenekler, etkin durumu ve katalogda yönetici tarafından salt okunur olarak onaylanmış tool_ids. `GET /agent-config/catalog` yapılandırılmış sağlayıcıları, sağlayıcı manifest'inde bildirilen `supports_tool_ids` yeteneğini ve varsa model kataloğunun sözleşme yolunu (`model_catalog_url`) döndürür; kimlik bilgisi veya sunucu yapılandırması içermez. OpenAI için model kataloğu bulunmadığından arayüz yeni OpenAI model seçimi açmaz; mevcut OpenAI ajanları için model/sağlayıcı alanları, API'de katalogla doğrulanabilir seçenek sağlanana kadar salt okunurdur. Arayüz MCP sunucu komutu, argüman, cwd, ortam değişkeni adı/değeri, A2A hedef URL'si/token'ı gibi sunucu yönetimi alanlarını göstermez. Ajan API sözleşmesinde ajana özel iletişim izinleri, tur sayısı veya devir limitleri yoktur; bu ayarlar arayüzde sunulmaz. Ajanı devre dışı bırakmak kaydı veya konuşma geçmişini silmez; ajan sohbet ve oda seçimlerinden çıkar, yönetim listesinden tekrar etkinleştirilebilir.
+Arayüz yalnızca ajan API'sinin desteklediği alanları düzenler: ad, açıklama, talimatlar, sağlayıcı/model (katalog `model_catalog_url` bildiren sağlayıcılardan okunur), düşünme eforu, yetenekler, etkin durumu ve katalogda yönetici tarafından salt okunur olarak onaylanmış tool_ids. `GET /agent-config/catalog` yapılandırılmış sağlayıcıları, sağlayıcı manifest'inde bildirilen `supports_tool_ids` yeteneğini ve varsa model kataloğunun sözleşme yolunu (`model_catalog_url`) döndürür; kimlik bilgisi veya sunucu yapılandırması içermez. Arayüzdeki "Sağlayıcı bağlantısı" bölümü `/opencode/integrations` ve `/opencode/connections` uçlarıyla abonelik/hesap girişi başlatır; A2A hedef URL'si/token'ı gibi sunucu yönetimi alanları hiçbir zaman gösterilmez. Ajan API sözleşmesinde ajana özel iletişim izinleri, tur sayısı veya devir limitleri yoktur; bu ayarlar arayüzde sunulmaz. Ajanı devre dışı bırakmak kaydı veya konuşma geçmişini silmez; ajan sohbet ve oda seçimlerinden çıkar, yönetim listesinden tekrar etkinleştirilebilir.
 
 MCP katalog yapılandırma örneği:
 
     {"docs":{"command":"uvx","args":["example-readonly-mcp"],"env_vars":["DOCS_TOKEN"],"read_only_tools":["search","fetch"]}}
 
-Bu JSON'u AGENT_RUNTIME_MCP_SERVERS ortam değişkenine koy. Token değerleri ayrı süreç ortam değişkenlerinde tutulur ve API yanıtlarına ya da çalıştırma izlerine eklenmez. read_only_tools güven kararıdır: MCP readOnlyHint açıklama niteliğindedir ve tek başına yetki vermez. İlk sürüm Codex'e yalnızca ajanın açık izin listesindeki araçları verir; shell, birleşik çalıştırma, web araması ve diğer MCP sunucuları kapalı kalır. İzin kaldırma, kuyruğa alınmış iş Codex'i başlatmadan önce güncel ajan kaydıyla tekrar denetlenir. Araç çağrısı izi yalnızca sunucu, araç, durum ve aşama alanlarını tutar. Araç argümanları, sonuç içeriği ve gizli değerler kaydedilmez. Codex oturumu, kullanıcı genelindeki ~/.codex/config.toml dosyasını devralmaz: kimlik doğrulama dosyası yalnızca uygulamanın ~/.agent-runtime-platform/codex-home dizinine kopyalanır (dizin 0700, dosya 0600); uygulama tarafından yenilenen belirteçler bu kopyada kalır.
+Bu JSON'u AGENT_RUNTIME_MCP_SERVERS ortam değişkenine koy. Token değerleri ayrı süreç ortam değişkenlerinde tutulur ve API yanıtlarına ya da çalıştırma izlerine eklenmez. read_only_tools güven kararıdır: MCP readOnlyHint açıklama niteliğindedir ve tek başına yetki vermez. OpenCode yalnızca ajanın açık izin listesindeki araçları görür; shell, dosya düzenleme, web erişimi ve diğer MCP araçları modele hiç gösterilmez. İzin kaldırma, kuyruğa alınmış iş modeli başlatmadan önce güncel ajan kaydıyla tekrar denetlenir. Araç çağrısı izi yalnızca sunucu, araç, durum ve aşama alanlarını tutar. Araç argümanları, sonuç içeriği ve gizli değerler kaydedilmez. OpenCode, kullanıcı genelindeki ~/.config/opencode dizinini devralmaz: çağrı başına geçici bir home kullanılır; kimlik bilgileri ise uygulamaya ait kalıcı veri kökünde (~/.agent-runtime-platform/opencode-home, dizin 0700) tutulur ve abonelik girişi bu kök üzerinden yapılır.
 
 Bir ajan devre dışı bırakıldığında eski konuşmaların ajan kimliği korunur. Her çalıştırma, kullanılan ajan tanımının sürümünü veya anlık görüntüsünü kaydeder; böylece geçmiş sonuçlar daha sonra açıklanabilir.
 
@@ -148,23 +148,23 @@ Gerçek şema, gereksinimler ve ilk uygulama sırasında belirlenecek. Bir ajan�
 
 İlk uygulama; ajanları API üzerinden kaydeder, bir konuşmaya iki ajan ekler ve bir ajanın diğerine gönderdiği mesajı tek bir genel LangGraph akışı üzerinden çalıştırır. Model seçimi ve talimatlar kayıtlı ajan tanımından yüklenir. Bir ajana özel Python sınıfı veya ayrı derlenmiş grafik gerekmez.
 
-Mesajlar, çalıştırmalar, ajan tanımı anlık görüntüleri ve sıralı olaylar veritabanında saklanır. Varsayılan sağlayıcı, sunucudaki ChatGPT girişiyle çalışan resmî Codex Python SDK'dır. OpenAI API anahtarıyla çalışan eski sağlayıcı isteğe bağlı olarak kullanılabilir. Otomatik testler sahte sağlayıcı kullanır ve gerçek bir model çağrısı yapmaz.
+Mesajlar, çalıştırmalar, ajan tanımı anlık görüntüleri ve sıralı olaylar veritabanında saklanır. Tek model sağlayıcısı, resmî `@opencode/sdk` üzerinden çalışan OpenCode'dur; kimlik bilgileri ortam değişkeniyle ya da uygulama içinden başlatılan abonelik girişiyle verilir. Otomatik testler sahte sağlayıcı kullanır ve gerçek bir model çağrısı yapmaz.
 
 ### Gereksinimler
 
 - Python 3.11 veya üstü
 - [uv](https://docs.astral.sh/uv/)
-- Gerçek model yanıtları için sunucuda ChatGPT hesabıyla giriş yapılmış Codex oturumu
+- Gerçek model yanıtları için [bun](https://bun.sh) 1.4.2+ ve OpenCode köprüsünün bağımlılıkları; kimlik bilgisi olarak ortam değişkeni veya uygulama içi sağlayıcı bağlantısı
 
 ### Yerelde çalıştırma
 
 ```bash
 uv sync --extra dev
 cp .env.example .env
-uv run --locked agent-runtime-login
+cd src/agent_runtime_platform/infrastructure/providers/opencode/host && bun install --frozen-lockfile && cd - >/dev/null
 ```
 
-Giriş açıksa komut durumu gösterir; değilse Codex SDK üzerinden cihaz kodu ve doğrulama adresi verir. Global Codex CLI kurmanız gerekmez. `.env` yalnızca yerel veritabanı ayarını içerir; Codex oturum bilgileri buraya kopyalanmaz. Ajan kayıtları varsayılan olarak `data/agent_runtime.db` SQLite veritabanında tutulur. Ardından:
+Sunucu açıldıktan sonra arayüzdeki "Sağlayıcı bağlantısı" bölümünden ChatGPT/Plus aboneliği bağlanabilir ya da sağlayıcının standart API anahtarı ortam değişkeni verilebilir. `.env` yalnızca yerel ayarları içerir; sağlayıcı kimlik bilgileri buraya yazılmaz. Ajan kayıtları varsayılan olarak `data/agent_runtime.db` SQLite veritabanında tutulur. Ardından:
 
 ```bash
 uv run uvicorn agent_runtime_platform.main:app --app-dir src --reload
@@ -183,13 +183,13 @@ uv run pytest
 uv run mypy
 ```
 
-Tarayıcı sohbetini `http://127.0.0.1:8000/` adresinden açın. İlk ajanı oluşturmak için soldaki formdan Codex modelini, o modelin desteklediği düşünme eforunu ve talimatları seçin; ardından ajanla mesajlaşabilirsiniz. Model ve efor seçenekleri sunucudaki Codex SDK kataloğundan alınır. Sohbet geçmişi veritabanında tutulur ve sayfa yenilendiğinde yüklenir.
+Tarayıcı sohbetini `http://127.0.0.1:8000/` adresinden açın. İlk ajanı oluşturmak için soldaki formdan bir OpenCode modelini, o modelin desteklediği düşünme eforunu ve talimatları seçin; ardından ajanla mesajlaşabilirsiniz. Model ve efor seçenekleri `GET /opencode/models` kataloğundan alınır. Sohbet geçmişi veritabanında tutulur ve sayfa yenilendiğinde yüklenir.
 
 PostgreSQL kullanmak için `AGENT_RUNTIME_DATABASE_URL` değerini örneğin `postgresql+psycopg://user:password@localhost:5432/agent_runtime` olarak ayarlayın.
 
 ### Oracle sunucuda kalıcı servis ve telefondan erişim
 
-Bu depo `/home/opc/apps/agent-runtime-platform` konumunda kuruluysa, `uv sync --extra dev --locked` ve `uv run --locked agent-runtime-login` adımlarından sonra `opc` kullanıcısı altında systemd servisini kurun:
+Bu depo `/home/opc/apps/agent-runtime-platform` konumunda kuruluysa, `uv sync --extra dev --locked` ve OpenCode köprüsü için `bun install --frozen-lockfile` adımlarından sonra `opc` kullanıcısı altında systemd servisini kurun:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -218,7 +218,7 @@ sudo tailscale serve status
 
 ### API akışı
 
-1. `POST /agents` ile iki ajan oluşturun. Her biri için `name`, `instructions`, `model_provider` (varsayılan `codex`) ve `model_name` gerekir. Codex için `GET /codex/models` model ve desteklenen eforları listeler; `model_reasoning_effort` (örneğin `high`) isteğe bağlıdır ve verilmezse modelin varsayılanı kullanılır. `capabilities` isteğe bağlıdır; örneğin `{"capabilities": ["backend", "api"]}`.
+1. `POST /agents` ile iki ajan oluşturun. Her biri için `name`, `instructions`, `model_provider` (varsayılan `opencode`) ve `model_name` gerekir. `GET /opencode/models` model ve desteklenen eforları listeler; `model_reasoning_effort` (örneğin `high`) isteğe bağlıdır ve verilmezse modelin varsayılanı kullanılır. `capabilities` isteğe bağlıdır; örneğin `{"capabilities": ["backend", "api"]}`.
 2. `POST /conversations` ile `agent_ids` listesini gönderin.
 3. `GET /agents?capability=backend` ile bu yeteneğe sahip etkin ajanları arayın. Eşleşme tamdır; yetenekler kaydedilirken ve aranırken boşluklardan arındırılıp küçük harfe dönüştürülür.
 4. `POST /conversations/{conversation_id}/messages` isteğinde `sender_agent_id`, `content` ve alıcılardan yalnızca birini gönderin: `recipient_agent_id` veya `recipient_capability`. Bu mevcut senkron uçtur. Kalıcı async kabul için aynı gövdeyi `/conversations/{conversation_id}/messages/async` adresine gönderin; `202` yanıtında `id`, `status` ve `status_url` bulunur. Yetenek eşleşmesi tek bir etkin ajan bulursa o ajan konuşmaya otomatik eklenir. Hiç eşleşme yoksa `404`, birden fazla eşleşme varsa `409` döner. Kimlikle gönderimde iki ajan da önceden konuşma üyesi olmalıdır.
@@ -264,14 +264,14 @@ Provider, Authorization Code + PKCE S256, `openid` scope ve ID token'ı destekle
 
 Bu ilk dilim mevcut kayıtları bir kullanıcıya migrate etmez ve endpoint'lere owner/tenant filtresi eklemez. Kapatmak için `AGENT_RUNTIME_AUTH_MODE=off` yapıp API sürecini yeniden başlatın; oturum tablosu yalnızca yeni `auth_sessions` tablosudur ve mevcut tablolara kolon eklenmez. Dağıtımdan önce SQLite için tutarlı yedek alın. Tüm kimlik yapılandırması ve OIDC gerçek sağlayıcıyla doğrulanmadan genel ağ erişimi açmayın.
 
-İstek gövdesi ve hata biçimleri için `/docs` içindeki OpenAPI arayüzünü kullanın. `codex` sağlayıcısı resmî Codex SDK üzerinden sunucudaki mevcut ChatGPT oturumunu kullanır; API anahtarı gerekmez. Ajan çağrıları salt okunur sandbox içinde, komut ve web araçları kapalı olarak yürütülür. Codex kullanım limitleri ChatGPT planına bağlıdır. Eski `openai` sağlayıcısını özellikle seçerseniz ayrıca `OPENAI_API_KEY` ayarlamanız ve API kullanımını karşılamanız gerekir. Testler hiçbir canlı model servisine bağlanmaz.
+İstek gövdesi ve hata biçimleri için `/docs` içindeki OpenAPI arayüzünü kullanın. `opencode` sağlayıcısı resmî `@opencode/sdk` üzerinden çalışır; kimlik bilgisi ortam değişkeniyle ya da `/opencode/connections` akışıyla verilir. Ajan çağrılarında modele yalnızca yönetici onaylı salt okunur MCP araçları açılır; shell, dosya düzenleme ve web erişimi kapalıdır. Abonelik kullanım limitleri seçilen sağlayıcı planına bağlıdır. Testler hiçbir canlı model servisine bağlanmaz.
 
 ## MVP kapsamı ve uygulama durumu
 
 | İşlev | Mevcut durum |
 | --- | --- |
 | Ajan yönetimi | API üzerinden ajan oluşturma, düzenleme ve devre dışı bırakma kullanılabilir. |
-| Model seçimi | Varsayılan Codex (ChatGPT girişi), isteğe bağlı OpenAI API sağlayıcısı ve varsayılan kapalı OpenCode sağlayıcısı ile ajan başına model adı desteklenir. OpenAI sağlayıcısı MCP araç izni almayı reddeder; OpenCode sağlayıcısı tüm araç izinlerini reddeder. Kurulum ve sınırlar: [OpenCode sağlayıcı belgesi](docs/opencode-provider.md). |
+| Model seçimi | Tek sağlayıcı OpenCode'dur: ajan başına model adı ve düşünme eforu desteklenir; MCP araç izinleri ve abonelik/hesap girişi aynı sağlayıcı üzerinden yürür. Kurulum ve sınırlar: [OpenCode sağlayıcı belgesi](docs/opencode-provider.md). |
 | Yeteneğe göre keşif | Etkin ajanlar tam yetenek eşleşmesiyle aranır; tekil olmayan veya boş eşleşme açık hata verir. |
 | Ajanlar arası mesajlaşma | İki ajan arasında kimlikle veya tekil yetenek eşleşmesiyle doğrudan mesajlaşma kullanılabilir. |
 | İnsan-ajan sohbeti | Yerel tek kullanıcılı arayüzden sohbet başlatılır; konuşma geçmişi kalıcıdır. |
@@ -299,7 +299,7 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 
 ## Teknoloji yönü
 
-**Kararlar:** Ajan akışlarını çalıştırmak için LangGraph, HTTP API için FastAPI, veriye erişim için SQLAlchemy kullanılacak. Yerel kurulum SQLite ile başlar; aynı şema PostgreSQL'e de bağlanabilir. Ajan tanımları kayıt katmanında veri olarak tutulur ve ortak LangGraph akışı bunları çalıştırma anında yükler. Varsayılan model sağlayıcısı, ChatGPT oturumunu kullanan Codex'tir; OpenAI API sağlayıcısı da isteğe bağlıdır.
+**Kararlar:** Ajan akışlarını çalıştırmak için LangGraph, HTTP API için FastAPI, veriye erişim için SQLAlchemy kullanılacak. Yerel kurulum SQLite ile başlar; aynı şema PostgreSQL'e de bağlanabilir. Ajan tanımları kayıt katmanında veri olarak tutulur ve ortak LangGraph akışı bunları çalıştırma anında yükler. Model erişimi tek sağlayıcıdan, resmî `@opencode/sdk` ile çalışan OpenCode'dan geçer; sağlayıcı bağlantıları (örneğin ChatGPT aboneliği) uygulama içinden kurulur.
 
 Ürün katmanı ajan kataloğu, izinler, konuşmalar, mesajlaşma ve oda davranışlarından sorumlu olur. Yerel tek kullanıcılı sohbet arayüzü ve tek sunuculu kalıcı görev kuyruğu kullanılabilir; kapsamlı yönetim/operatör arayüzü daha sonra değerlendirilebilir.
 

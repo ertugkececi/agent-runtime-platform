@@ -1,9 +1,10 @@
 """The Python side of the OpenCode bridge.
 
-One model turn runs one short-lived TypeScript host process (``host/``): one
-JSON request on stdin, NDJSON records on stdout, process exit as the end of the
-turn. The wire contract is ``docs/opencode-bridge-contract.md``. There is no
-daemon and no state shared between calls.
+One call runs one short-lived TypeScript host process (``host/``): one JSON
+request on stdin, NDJSON records on stdout, process exit as the end of the
+call. The wire contract is ``docs/opencode-bridge-contract.md``. There is no
+daemon and no state shared between calls, except the persistent data root that
+carries provider credentials and sessions across calls.
 
 The adapter owns the process: a wall-clock budget from provider configuration
 kills the host on expiry, and every host failure becomes one
@@ -11,7 +12,9 @@ kills the host on expiry, and every host failure becomes one
 
 Every call runs in a private home of its own (``0700``, files ``0600``) that
 replaces ``HOME`` and the XDG roots for the child, so the invoking user's
-``~/.config/opencode`` is never read or modified.
+``~/.config/opencode`` is never read or modified. The one exception is
+``XDG_DATA_HOME``: it points at the persistent, app-owned data root, which is
+where OpenCode stores its credential database.
 """
 
 from __future__ import annotations
@@ -30,14 +33,17 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
 
+from agent_runtime_platform.infrastructure.mcp_tools import bridge_mcp_servers
 from agent_runtime_platform.infrastructure.providers._base import HandoffRequest, ModelOutput, ProviderError
+from agent_runtime_platform.infrastructure.providers._manifest import supports_tool_ids
 
-BRIDGE_PROTOCOL = 1
-COMPATIBLE_MIN = 1
-COMPATIBLE_MAX_EXCLUSIVE = 2
+BRIDGE_PROTOCOL = 2
+COMPATIBLE_MIN = 2
+COMPATIBLE_MAX_EXCLUSIVE = 3
 
 HOST_ROOT = Path(__file__).resolve().parent / "host"
 TIMEOUT_ENV = "AGENT_RUNTIME_OPENCODE_TIMEOUT_SECONDS"
+DATA_HOME_ENV = "AGENT_RUNTIME_OPENCODE_HOME"
 DEFAULT_TIMEOUT_SECONDS = 600.0
 MAXIMUM_TIMEOUT_SECONDS = 3600.0
 EXIT_GRACE_SECONDS = 5.0
@@ -46,10 +52,12 @@ INVALID_RESPONSE = "The OpenCode bridge host returned an invalid response."
 FAILED_REQUEST = "The OpenCode bridge host failed the model request."
 TIMEOUT_MESSAGE = "The OpenCode model request timed out."
 VERSION_MESSAGE = "The OpenCode bridge host reported an incompatible bridge protocol."
+CONNECT_STOP_MESSAGE = "The OpenCode bridge host stopped before the connection completed."
 
-# The child never sees the invoking user's roots. HOME and every XDG variable
-# point into one private home per call, so OpenCode resolves its configuration,
-# data, cache and state inside a directory this process owns and removes.
+# The child never sees the invoking user's roots. HOME, the config, cache and
+# state roots point into one private home per call, which this process owns and
+# removes. The data root is the only persistent root: it carries the
+# credential database, so a provider connection survives the call.
 HOME_VARIABLE = "HOME"
 XDG_ROOTS: tuple[tuple[str, str], ...] = (
     ("XDG_CONFIG_HOME", "config"),
@@ -64,6 +72,11 @@ ToolEvent = Callable[[dict[str, str]], None]
 def list_opencode_models() -> list[dict[str, Any]]:
     """Expose the OpenCode model and effort choices, in the shared catalog shape."""
     return OpenCodeChatProvider().list_models()
+
+
+def list_opencode_integrations() -> list[dict[str, Any]]:
+    """Expose the integrations and sign-in methods the host offers."""
+    return OpenCodeChatProvider().list_integrations()
 
 
 class OpenCodeChatProvider:
@@ -87,9 +100,14 @@ class OpenCodeChatProvider:
         allow_handoff: bool = False,
     ) -> ModelOutput:
         tool_ids = sorted(set(agent.get("tool_ids") or []))
-        if tool_ids:
+        if tool_ids and not supports_tool_ids("opencode"):
             raise ProviderError("tool_ids are not supported by this provider.")
-        request = self._request(agent, history, allow_handoff=allow_handoff)
+        try:
+            request = self._request(agent, history, allow_handoff=allow_handoff)
+        except ValueError as exc:
+            # Administrator trust can be withdrawn between the agent write and
+            # the turn; the message names the tool id, never a value.
+            raise ProviderError(str(exc)) from exc
         callback = agent.get("tool_event_callback")
         exit_code, records = self._run(request, callback if callable(callback) else None)
         return self._interpret(records, exit_code, allow_handoff=allow_handoff)
@@ -99,6 +117,23 @@ class OpenCodeChatProvider:
         request = {"bridge_protocol": BRIDGE_PROTOCOL, "operation": "models"}
         exit_code, records = self._run(request, None)
         return _catalog_value(records, exit_code)
+
+    def list_integrations(self) -> list[dict[str, Any]]:
+        """Run one host process and return its integrations."""
+        request = {"bridge_protocol": BRIDGE_PROTOCOL, "operation": "integrations"}
+        exit_code, records = self._run(request, None)
+        return _integrations_value(records, exit_code)
+
+    def host_command(self) -> list[str]:
+        """The argv of one host process; tests replace it through the constructor."""
+        return self._command or self._default_command()
+
+    @staticmethod
+    def _default_command() -> list[str]:
+        bun = shutil.which("bun")
+        if bun is None:
+            raise ProviderError("The OpenCode bridge host requires 'bun' on PATH.")
+        return [bun, "run", "start"]
 
     @staticmethod
     def _request(
@@ -112,6 +147,7 @@ class OpenCodeChatProvider:
         if isinstance(model, str) and isinstance(effort, str) and effort and "#" not in model:
             # OpenCode selects effort through model variants, not a request field.
             model = f"{model}#{effort}"
+        tool_ids = sorted(set(agent.get("tool_ids") or []))
         request: dict[str, Any] = {
             "bridge_protocol": BRIDGE_PROTOCOL,
             "model": model,
@@ -121,8 +157,10 @@ class OpenCodeChatProvider:
                 for message in history
             ],
             "allow_handoff": allow_handoff,
-            "tool_ids": [],
+            "tool_ids": tool_ids,
         }
+        if tool_ids:
+            request["mcp_servers"] = bridge_mcp_servers(tool_ids)
         if allow_handoff:
             capabilities = sorted(set(agent.get("remote_a2a_capabilities") or []))
             if capabilities:
@@ -134,34 +172,21 @@ class OpenCodeChatProvider:
         request: dict[str, Any],
         on_event: ToolEvent | None,
     ) -> tuple[int, list[dict[str, Any]]]:
-        command = self._command or self._default_command()
+        command = self.host_command()
         timeout = self._timeout()
         try:
             payload = json.dumps(request, ensure_ascii=False).encode("utf-8")
         except (TypeError, ValueError) as exc:
             raise ProviderError(FAILED_REQUEST) from exc
         with _private_home() as home:
-            popen_options: dict[str, Any] = {
-                "cwd": str(HOST_ROOT),
-                "env": _child_environment(home),
-                "stdin": subprocess.PIPE,
-                "stdout": subprocess.PIPE,
-                "start_new_session": os.name == "posix",
-            }
-            if os.name == "posix":
-                # Files the host creates in the private home are 0600 and
-                # its directories 0700, whatever the server's umask is.
-                popen_options["umask"] = 0o077
-            try:
-                process = subprocess.Popen(command, **popen_options)
-            except OSError as exc:
-                raise ProviderError("The OpenCode bridge host could not be started.") from exc
+            process = _spawn(command, home)
             try:
                 stdin = process.stdin
                 if stdin is None:
                     raise ProviderError(FAILED_REQUEST)
                 try:
-                    stdin.write(payload)
+                    # The host reads one request line; the newline ends it.
+                    stdin.write(payload + b"\n")
                     stdin.close()
                 except OSError as exc:
                     raise ProviderError(FAILED_REQUEST) from exc
@@ -170,13 +195,6 @@ class OpenCodeChatProvider:
                 # Every path out of this method leaves no host process behind.
                 if process.poll() is None:
                     _kill(process)
-
-    @staticmethod
-    def _default_command() -> list[str]:
-        bun = shutil.which("bun")
-        if bun is None:
-            raise ProviderError("The OpenCode bridge host requires 'bun' on PATH.")
-        return [bun, "run", "start"]
 
     def _timeout(self) -> float:
         if self._timeout_seconds is not None:
@@ -243,6 +261,56 @@ def _catalog_value(records: list[dict[str, Any]], exit_code: int) -> list[dict[s
     return [_catalog_entry(entry) for entry in models]
 
 
+def _integrations_value(records: list[dict[str, Any]], exit_code: int) -> list[dict[str, Any]]:
+    result = _final_record(records, exit_code)
+    if result.get("kind") != "integrations":
+        raise ProviderError(INVALID_RESPONSE)
+    integrations = result.get("integrations")
+    if not isinstance(integrations, list):
+        raise ProviderError(INVALID_RESPONSE)
+    return [_integration_entry(entry) for entry in integrations]
+
+
+def _integration_entry(entry: Any) -> dict[str, Any]:
+    """Keep only the descriptor fields, with the types the HTTP response promises."""
+    if not isinstance(entry, dict):
+        raise ProviderError(INVALID_RESPONSE)
+    integration_id = entry.get("id")
+    name = entry.get("name")
+    connected = entry.get("connected")
+    methods = entry.get("methods")
+    if (
+        not isinstance(integration_id, str)
+        or not integration_id.strip()
+        or not isinstance(name, str)
+        or not isinstance(connected, bool)
+        or not isinstance(methods, list)
+    ):
+        raise ProviderError(INVALID_RESPONSE)
+    return {
+        "id": integration_id,
+        "name": name,
+        "connected": connected,
+        "methods": [_method_entry(method) for method in methods],
+    }
+
+
+def _method_entry(method: Any) -> dict[str, Any]:
+    if not isinstance(method, dict):
+        raise ProviderError(INVALID_RESPONSE)
+    method_id = method.get("id")
+    method_type = method.get("type")
+    label = method.get("label")
+    if (
+        not isinstance(method_id, str)
+        or not method_id.strip()
+        or not isinstance(method_type, str)
+        or not isinstance(label, str)
+    ):
+        raise ProviderError(INVALID_RESPONSE)
+    return {"id": method_id, "type": method_type, "label": label}
+
+
 def _catalog_entry(entry: Any) -> dict[str, Any]:
     """Keep only the catalog fields, with the types the HTTP response promises."""
     if not isinstance(entry, dict):
@@ -271,12 +339,33 @@ def _catalog_entry(entry: Any) -> dict[str, Any]:
     }
 
 
-def _child_environment(home: Path) -> dict[str, str]:
-    """The server environment with every OpenCode root pointed at ``home``.
+def data_home() -> Path:
+    """The persistent, app-owned data root that carries provider credentials.
 
-    The user's ``HOME`` and XDG values are replaced, never forwarded. Environment
-    variables are how configuration and credentials reach the host, so the rest
-    of the environment is passed through untouched.
+    ``AGENT_RUNTIME_OPENCODE_HOME`` overrides it; the directory is created with
+    mode ``0700`` on first use. The invoking user's own OpenCode data root is
+    never used.
+    """
+    configured = os.getenv(DATA_HOME_ENV)
+    root = (
+        Path(configured).expanduser()
+        if configured is not None and configured.strip()
+        else Path.home() / ".agent-runtime-platform" / "opencode-home"
+    )
+    data = root / "data"
+    data.mkdir(parents=True, exist_ok=True)
+    data.chmod(0o700)
+    return data
+
+
+def _child_environment(home: Path) -> dict[str, str]:
+    """The server environment with every OpenCode root pointed at its owner.
+
+    The user's ``HOME`` and XDG values are replaced, never forwarded: config,
+    cache and state live in the per-call private home, and data lives in the
+    persistent app-owned root that carries credentials. Environment variables
+    are how provider credentials reach the host, so the rest of the environment
+    is passed through untouched.
     """
     environment = {
         key: value
@@ -286,17 +375,45 @@ def _child_environment(home: Path) -> dict[str, str]:
     environment[HOME_VARIABLE] = str(home)
     for name, directory in XDG_ROOTS:
         environment[name] = str(home / directory)
+    environment["XDG_DATA_HOME"] = str(data_home())
     return environment
+
+
+def _spawn(command: Sequence[str], home: Path) -> subprocess.Popen:
+    popen_options: dict[str, Any] = {
+        "cwd": str(HOST_ROOT),
+        "env": _child_environment(home),
+        "stdin": subprocess.PIPE,
+        "stdout": subprocess.PIPE,
+        "start_new_session": os.name == "posix",
+    }
+    if os.name == "posix":
+        # Files the host creates in the private home are 0600 and its
+        # directories 0700, whatever the server's umask is.
+        popen_options["umask"] = 0o077
+    try:
+        return subprocess.Popen(command, **popen_options)
+    except OSError as exc:
+        raise ProviderError("The OpenCode bridge host could not be started.") from exc
+
+
+def _create_private_home() -> Path:
+    """A private home for one host call; the caller removes it."""
+    root = Path(tempfile.mkdtemp(prefix="agent-runtime-opencode-"))
+    root.chmod(0o700)
+    for _, directory in XDG_ROOTS:
+        if directory == "data":
+            # The data root is persistent and owned by `data_home()`.
+            continue
+        (root / directory).mkdir(mode=0o700)
+    return root
 
 
 @contextlib.contextmanager
 def _private_home() -> Iterator[Path]:
     """A private home for one host call; every path in it is removed at the end."""
-    root = Path(tempfile.mkdtemp(prefix="agent-runtime-opencode-"))
-    root.chmod(0o700)
+    root = _create_private_home()
     try:
-        for _, directory in XDG_ROOTS:
-            (root / directory).mkdir(mode=0o700)
         yield root
     finally:
         shutil.rmtree(root, ignore_errors=True)

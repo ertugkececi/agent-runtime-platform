@@ -12,8 +12,9 @@ from agent_runtime_platform.infrastructure.database import Database
 from agent_runtime_platform.infrastructure.auth import AuthMiddleware, OIDCAuth, OIDCConfig, install_auth_routes
 from agent_runtime_platform.infrastructure.a2a import A2AError, configured_targets
 from agent_runtime_platform.infrastructure.providers import (
+    OpenCodeConnections,
+    ProviderError,
     ProviderRegistry,
-    list_codex_models,
     list_opencode_models,
     supports_tool_ids,
 )
@@ -40,18 +41,21 @@ from agent_runtime_platform.api.schemas import (
     HumanChatCreate,
     HumanChatMessageCreate,
     MessageCreate,
+    OpenCodeConnectionCode,
+    OpenCodeConnectionCreate,
     RoomCreate,
     RoomRunCreate,
 )
 
 # The model catalogs this application serves, by provider. This is HTTP surface,
 # not a provider capability, so it lives next to the routes it names.
-MODEL_CATALOG_URLS = {"codex": "/codex/models", "opencode": "/opencode/models"}
+MODEL_CATALOG_URLS = {"opencode": "/opencode/models"}
 
 
 def create_app(
     database_url: str | None = None,
     providers: ProviderRegistry | None = None,
+    connections: OpenCodeConnections | None = None,
 ) -> FastAPI:
     load_dotenv(override=False)
     url = database_url or os.getenv("AGENT_RUNTIME_DATABASE_URL") or "sqlite:///./data/agent_runtime.db"
@@ -59,6 +63,7 @@ def create_app(
     auth_config = OIDCConfig.from_environment()
     auth = OIDCAuth(auth_config, database) if auth_config else None
     provider_registry = providers or ProviderRegistry()
+    opencode_connections = connections or OpenCodeConnections()
     runtime = AgentRuntimeService(database, provider_registry)
     room_runtime = RoomRuntimeService(database, provider_registry)
     runtime.room_runtime = room_runtime
@@ -70,6 +75,7 @@ def create_app(
     app.state.database = database
     app.state.runtime = runtime
     app.state.auth = auth
+    app.state.opencode_connections = opencode_connections
     resource_auth = ResourceAuthorization(database, auth_config)
     app.state.resource_auth = resource_auth
     runtime.resource_auth = resource_auth
@@ -138,31 +144,87 @@ def create_app(
             ]
         )
 
-    @app.get("/codex/models")
-    def codex_models(request: Request) -> list[dict]:
-        scope = ownership_scope(request)
-        if scope is not None and scope.role in {"admin", "member"}:
-            raise HTTPException(status_code=403, detail="Global catalogs are unavailable in tenant role mode.")
-        try:
-            return list_codex_models()
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="Codex model list is unavailable.") from exc
-
     @app.get("/opencode/models")
     def opencode_models(request: Request) -> list[dict]:
         scope = ownership_scope(request)
         if scope is not None and scope.role in {"admin", "member"}:
             raise HTTPException(status_code=403, detail="Global catalogs are unavailable in tenant role mode.")
-        if not provider_registry.supports("opencode"):
-            raise HTTPException(
-                status_code=404, detail="The OpenCode model provider is not configured."
-            )
         try:
             return list_opencode_models()
         except Exception as exc:
             raise HTTPException(
                 status_code=503, detail="OpenCode model list is unavailable."
             ) from exc
+
+    @app.get("/opencode/integrations")
+    def opencode_integrations(request: Request) -> list[dict]:
+        """Expose the provider integrations and sign-in methods, never a credential."""
+        scope = ownership_scope(request)
+        if scope is not None and scope.role in {"admin", "member"}:
+            raise HTTPException(status_code=403, detail="Global catalogs are unavailable in tenant role mode.")
+        try:
+            return opencode_connections.list_integrations()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503, detail="OpenCode integration list is unavailable."
+            ) from exc
+
+    @app.post("/opencode/connections", status_code=status.HTTP_202_ACCEPTED)
+    def start_opencode_connection(
+        request: OpenCodeConnectionCreate,
+        http_request: Request,
+    ) -> dict:
+        """Start one provider sign-in and return the details the human needs.
+
+        The attempt is owned by this server process; a deployment with several
+        API workers must route its follow-up calls back to the same worker.
+        """
+        scope = ownership_scope(http_request)
+        if scope is not None and scope.role in {"admin", "member"}:
+            raise HTTPException(status_code=403, detail="Global catalogs are unavailable in tenant role mode.")
+        try:
+            return opencode_connections.start(
+                request.integration, request.method, request.label
+            )
+        except ProviderError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/opencode/connections/{attempt_id}")
+    def get_opencode_connection(attempt_id: str, request: Request) -> dict:
+        scope = ownership_scope(request)
+        if scope is not None and scope.role in {"admin", "member"}:
+            raise HTTPException(status_code=403, detail="Global catalogs are unavailable in tenant role mode.")
+        try:
+            return opencode_connections.status(attempt_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Connection attempt not found.") from exc
+
+    @app.post("/opencode/connections/{attempt_id}/code", status_code=status.HTTP_202_ACCEPTED)
+    def submit_opencode_connection_code(
+        attempt_id: str,
+        request: OpenCodeConnectionCode,
+        http_request: Request,
+    ) -> dict:
+        scope = ownership_scope(http_request)
+        if scope is not None and scope.role in {"admin", "member"}:
+            raise HTTPException(status_code=403, detail="Global catalogs are unavailable in tenant role mode.")
+        try:
+            return opencode_connections.submit_code(attempt_id, request.code)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Connection attempt not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.delete("/opencode/connections/{attempt_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def cancel_opencode_connection(attempt_id: str, request: Request) -> Response:
+        scope = ownership_scope(request)
+        if scope is not None and scope.role in {"admin", "member"}:
+            raise HTTPException(status_code=403, detail="Global catalogs are unavailable in tenant role mode.")
+        try:
+            opencode_connections.cancel(attempt_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Connection attempt not found.") from exc
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post("/agents", status_code=status.HTTP_201_CREATED)
     def create_agent(request: AgentCreate, http_request: Request) -> dict:

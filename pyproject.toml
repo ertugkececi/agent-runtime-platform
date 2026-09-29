@@ -11,19 +11,16 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<1.0",
     "langgraph>=1.0,<2.0",
-    "langchain-openai>=1.0,<2.0",
     "SQLAlchemy>=2.0,<3.0",
     "psycopg[binary]>=3.2,<4.0",
     "python-dotenv>=1.0,<2.0",
     "uvicorn[standard]>=0.34,<1.0",
-    "openai-codex>=0.156,<0.157",
     "mcp>=1.20,<2",
     "httpx>=0.27,<1.0",
     "PyJWT[crypto]>=2.8,<3.0",
 ]
 
 [project.scripts]
-agent-runtime-login = "agent_runtime_platform.infrastructure.codex_login:main"
 agent-runtime-worker = "agent_runtime_platform.queue_worker:main"
 agent-runtime-queue-metrics = "agent_runtime_platform.infrastructure.queue_metrics:main"
 agent-runtime-tenant-migrate = "agent_runtime_platform.infrastructure.tenant_migration:main"

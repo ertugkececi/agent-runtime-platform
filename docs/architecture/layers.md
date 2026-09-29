@@ -13,7 +13,7 @@ public HTTP contract are unchanged (#103).
 | `api/` | the FastAPI application (`app.py`), request/response schemas (`schemas.py`), the exported contract (`openapi_contract.py`) | `application/`, `domain/`, `infrastructure/` |
 | `application/` | use cases and policy that orchestrate the domain and the adapters: `runtime.py`, `rooms.py`, `resource_auth.py` | `domain/`, `infrastructure/` |
 | `domain/` | the persisted domain model: entities, identity and clock helpers (`models.py`) | nothing |
-| `infrastructure/` | adapters to everything outside the process: `database.py`, `auth.py`, `a2a.py`, `mcp_tools.py`, `queue_metrics.py`, `codex_home.py`, `codex_login.py`, the offline migrations, and `providers/` | `domain/` |
+| `infrastructure/` | adapters to everything outside the process: `database.py`, `auth.py`, `a2a.py`, `mcp_tools.py`, `queue_metrics.py`, the offline migrations, and `providers/` | `domain/` |
 
 Dependencies point inward:
 

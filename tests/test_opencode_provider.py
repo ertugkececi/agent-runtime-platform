@@ -19,15 +19,25 @@ import pytest
 from agent_runtime_platform.infrastructure.mcp_tools import validate_tool_ids
 from agent_runtime_platform.infrastructure.providers._base import HandoffRequest, ProviderError
 from agent_runtime_platform.infrastructure.providers.opencode.provider import (
+    DATA_HOME_ENV,
     DEFAULT_TIMEOUT_SECONDS,
     MAXIMUM_TIMEOUT_SECONDS,
     TIMEOUT_ENV,
     OpenCodeChatProvider,
+    list_opencode_integrations,
     list_opencode_models,
 )
 
 FAKE_HOST = Path(__file__).resolve().parent / "fixtures" / "fake_opencode_host.py"
 HISTORY = [{"role": "user", "content": "Summarize the queue module."}]
+MCP_CONFIG = {
+    "fixture": {
+        "command": sys.executable,
+        "args": [str(FAKE_HOST)],
+        "env_vars": ["FIXTURE_TOKEN"],
+        "read_only_tools": ["lookup"],
+    }
+}
 
 
 def _agent(**overrides) -> dict:
@@ -58,7 +68,7 @@ def test_a_reply_round_trips_through_the_host(monkeypatch, tmp_path):
     assert provider.generate(_agent(), HISTORY) == "Fake reply."
     request = json.loads(capture.read_text(encoding="utf-8"))
     assert request == {
-        "bridge_protocol": 1,
+        "bridge_protocol": 2,
         "model": "opencode/big-model",
         "instructions": "Answer in the user's language.",
         "history": HISTORY,
@@ -108,21 +118,43 @@ def test_a_handoff_is_refused_when_handoff_is_disabled(monkeypatch):
         provider.generate(_agent(), HISTORY)
 
 
-def test_tool_grants_are_refused_before_the_host_starts(monkeypatch, tmp_path):
+def test_tool_grants_travel_as_mcp_servers_without_values(monkeypatch, tmp_path):
+    capture = tmp_path / "request.json"
+    monkeypatch.setenv("AGENT_RUNTIME_MCP_SERVERS", json.dumps(MCP_CONFIG))
+    monkeypatch.setenv("FIXTURE_TOKEN", "sk-test-secret-value")
+    provider = _provider(monkeypatch, "reply", FAKE_HOST_CAPTURE=str(capture))
+    assert provider.generate(_agent(tool_ids=["fixture/lookup"]), HISTORY) == "Fake reply."
+
+    request = json.loads(capture.read_text(encoding="utf-8"))
+    assert request["tool_ids"] == ["fixture/lookup"]
+    assert request["mcp_servers"] == [
+        {
+            "name": "fixture",
+            "command": sys.executable,
+            "args": [str(FAKE_HOST)],
+            "env_vars": ["FIXTURE_TOKEN"],
+            "tools": ["lookup"],
+        }
+    ]
+    assert "sk-test-secret-value" not in capture.read_text(encoding="utf-8")
+
+
+def test_a_withdrawn_tool_grant_fails_the_turn(monkeypatch, tmp_path):
     marker = tmp_path / "started"
     provider = OpenCodeChatProvider(
         command=[sys.executable, "-c", f"open({str(marker)!r}, 'w').close()"],
         timeout_seconds=10,
     )
-    with pytest.raises(ProviderError, match="tool_ids are not supported"):
+    monkeypatch.setenv("AGENT_RUNTIME_MCP_SERVERS", "{}")
+    with pytest.raises(ProviderError, match="no longer administrator-approved"):
         provider.generate(_agent(tool_ids=["fixture/lookup"]), HISTORY)
     assert not marker.exists()
 
 
-def test_the_api_gate_refuses_tool_grants_for_opencode():
-    # create_agent/update_agent turn this ValueError into an explicit 422.
-    with pytest.raises(ValueError, match="not supported by provider 'opencode'"):
-        validate_tool_ids(["fixture/lookup"], "opencode")
+def test_the_api_gate_allows_opencode_past_the_manifest_check():
+    # create_agent/update_agent run this; the approval catalog decides next.
+    with pytest.raises(ValueError, match="not administrator-approved"):
+        validate_tool_ids(["unknown/tool"], "opencode")
 
 
 def test_tool_events_reach_the_tool_event_callback(monkeypatch):
@@ -142,15 +174,17 @@ def test_unknown_record_types_are_ignored(monkeypatch):
     assert provider.generate(_agent(), HISTORY) == "Done."
 
 
-def test_the_child_runs_in_a_private_home(monkeypatch, tmp_path):
+def test_the_child_runs_in_a_private_home_and_a_persistent_data_root(monkeypatch, tmp_path):
     user_home = tmp_path / "user-home"
     user_config = user_home / ".config" / "opencode" / "opencode.json"
     user_config.parent.mkdir(parents=True)
     user_config.write_text('{"model": "user-choice"}', encoding="utf-8")
     modified_at = user_config.stat().st_mtime_ns
+    data_root = tmp_path / "persistent-opencode"
 
     monkeypatch.setenv("HOME", str(user_home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(user_home / ".config"))
+    monkeypatch.setenv(DATA_HOME_ENV, str(data_root))
     capture = tmp_path / "environment.json"
     provider = _provider(monkeypatch, "reply", FAKE_HOST_ENV_CAPTURE=str(capture))
     provider.generate(_agent(), HISTORY)
@@ -158,16 +192,34 @@ def test_the_child_runs_in_a_private_home(monkeypatch, tmp_path):
     report = json.loads(capture.read_text(encoding="utf-8"))
     home = Path(report["HOME"])
     assert home != user_home
-    for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
+    # Config, cache and state are per call; only data is app-owned and persistent.
+    for name in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
         assert Path(report[name]).parent == home
+    assert Path(report["XDG_DATA_HOME"]) == data_root / "data"
+    assert Path(report["XDG_DATA_HOME"]).is_dir()
+    if os.name == "posix":
+        assert (data_root / "data").stat().st_mode & 0o777 == 0o700
     # The user's configuration is neither read nor modified.
     assert user_config.read_text(encoding="utf-8") == '{"model": "user-choice"}'
     assert user_config.stat().st_mtime_ns == modified_at
-    # The private home does not outlive the call.
+    # The per-call home does not outlive the call; the data root does.
     assert not home.exists()
+    assert data_root.exists()
     if os.name == "posix":
         assert report["home_mode"] == "0o700"
         assert report["probe_mode"] == "0o600"
+
+
+def test_the_data_root_defaults_to_the_app_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv(DATA_HOME_ENV, raising=False)
+    capture = tmp_path / "environment.json"
+    provider = _provider(monkeypatch, "reply", FAKE_HOST_ENV_CAPTURE=str(capture))
+    provider.generate(_agent(), HISTORY)
+    report = json.loads(capture.read_text(encoding="utf-8"))
+    assert Path(report["XDG_DATA_HOME"]) == (
+        tmp_path / ".agent-runtime-platform" / "opencode-home" / "data"
+    )
 
 
 def test_environment_secrets_never_reach_the_request(monkeypatch, tmp_path):
@@ -204,12 +256,35 @@ def test_the_model_catalog_round_trips_through_the_host(monkeypatch, tmp_path):
         },
     ]
     assert json.loads(capture.read_text(encoding="utf-8")) == {
-        "bridge_protocol": 1,
+        "bridge_protocol": 2,
         "operation": "models",
     }
 
 
-def test_the_module_function_lists_models_through_the_default_provider(monkeypatch):
+def test_the_integration_list_round_trips_through_the_host(monkeypatch, tmp_path):
+    capture = tmp_path / "request.json"
+    provider = _provider(monkeypatch, "integrations", FAKE_HOST_CAPTURE=str(capture))
+    assert provider.list_integrations() == [
+        {
+            "id": "openai",
+            "name": "OpenAI",
+            "connected": False,
+            "methods": [
+                {
+                    "id": "chatgpt-headless",
+                    "type": "oauth",
+                    "label": "ChatGPT Pro/Plus (headless)",
+                }
+            ],
+        }
+    ]
+    assert json.loads(capture.read_text(encoding="utf-8")) == {
+        "bridge_protocol": 2,
+        "operation": "integrations",
+    }
+
+
+def test_the_module_functions_use_the_default_provider(monkeypatch):
     monkeypatch.setenv("FAKE_HOST_SCENARIO", "models")
     monkeypatch.setattr(
         OpenCodeChatProvider,
@@ -217,11 +292,19 @@ def test_the_module_function_lists_models_through_the_default_provider(monkeypat
         staticmethod(lambda: [sys.executable, str(FAKE_HOST)]),
     )
     assert list_opencode_models()[0]["id"] == "opencode/big-model"
+    monkeypatch.setenv("FAKE_HOST_SCENARIO", "integrations")
+    assert list_opencode_integrations()[0]["id"] == "openai"
 
 
 def test_an_incomplete_catalog_record_is_refused(monkeypatch):
     with pytest.raises(ProviderError, match="invalid response"):
         _provider(monkeypatch, "invalid_models").list_models()
+
+
+def test_an_incomplete_integration_record_is_refused(monkeypatch):
+    provider = _provider(monkeypatch, "models")
+    with pytest.raises(ProviderError, match="invalid response"):
+        provider.list_integrations()
 
 
 def test_a_host_error_record_fails_the_catalog(monkeypatch):
@@ -243,7 +326,7 @@ def test_a_host_that_skips_hello_is_refused(monkeypatch):
 
 
 def test_a_host_with_another_protocol_version_is_refused(monkeypatch):
-    provider = _provider(monkeypatch, "bad_version", FAKE_HOST_PROTOCOL="2")
+    provider = _provider(monkeypatch, "bad_version", FAKE_HOST_PROTOCOL="1")
     with pytest.raises(ProviderError, match="incompatible bridge protocol"):
         provider.generate(_agent(), HISTORY)
 

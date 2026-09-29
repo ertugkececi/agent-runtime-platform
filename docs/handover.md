@@ -58,6 +58,34 @@ tenant-role work was re-implemented in **#92** and is on `main` default-off.
   `docs/queue-scaling-decision.md` records what it measures and that it never
   carries content, prompts, credentials or error messages.
 
+## OpenCode parity (branch `feat/opencode-parity`)
+
+The platform now has one model provider: OpenCode. This delivery:
+
+- removed the `codex` and `openai` providers, `codex_login.py`,
+  `codex_home.py`, the `/codex/models` route, and the
+  `AGENT_RUNTIME_FEATURE_PROVIDER_OPENCODE` flag; `model_provider` defaults to
+  `opencode`, and new dependency entries for the removed SDKs are gone from
+  `pyproject.toml`/`uv.lock`;
+- bridge protocol v2: a turn carries its administrator-approved MCP servers
+  (`mcp_servers`), the host allows exactly the granted tool actions and denies
+  everything else, and new `integrations`/`connect` operations drive provider
+  sign-ins. Console output is redirected to stderr, because stdout is the
+  record stream;
+- credentials: `XDG_DATA_HOME` is the one persistent root
+  (`AGENT_RUNTIME_OPENCODE_HOME`, default `~/.agent-runtime-platform/opencode-home`);
+  config, cache and state stay in a per-call private home that is removed when
+  the call ends;
+- new HTTP surface: `GET /opencode/integrations` and
+  `POST/GET/DELETE /opencode/connections…`; the local console has a provider
+  connection panel that drives them;
+- `contracts/openapi.json` regenerated; `docs/opencode-provider.md` and
+  `docs/opencode-bridge-contract.md` rewritten for protocol v2; `.env.example`
+  documents the data root and drops the flag.
+
+The `opencode-host` CI job still guards the TypeScript package, and the Python
+suite drives the adapter through `tests/fixtures/fake_opencode_host.py`.
+
 ## What remains
 
 The plan is delivered: epics **#66–#69** are complete, the follow-ups **#103**

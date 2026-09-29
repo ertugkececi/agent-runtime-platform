@@ -1,12 +1,17 @@
 import { describe, expect, test } from "bun:test";
 
-import { runBridge, type BridgeDependencies, type TurnHost } from "../src/bridge";
-import { BridgeError, type BridgeRecord } from "../src/protocol";
+import {
+  runBridge,
+  type BridgeDependencies,
+  type ConnectionHooks,
+  type TurnHost,
+} from "../src/bridge";
+import { BRIDGE_PROTOCOL, BridgeError, type BridgeRecord } from "../src/protocol";
 import type { TraceEvent } from "../src/trace";
 
 function request(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    bridge_protocol: 1,
+    bridge_protocol: BRIDGE_PROTOCOL,
     model: "opencode/big-model",
     instructions: "Be helpful.",
     history: [{ role: "user", content: "Hello." }],
@@ -39,6 +44,15 @@ async function run(
     async listModels() {
       return [];
     },
+    async listIntegrations() {
+      return [];
+    },
+    async connect() {
+      return { integration: "openai", method: "chatgpt-headless" };
+    },
+    async readCode() {
+      return "the-code";
+    },
     write: (record) => {
       records.push(record);
     },
@@ -53,7 +67,7 @@ describe("runBridge", () => {
   test("emits hello, then one result, and exits zero", async () => {
     const { records, code } = await run(request());
     expect(code).toBe(0);
-    expect(records[0]).toEqual({ type: "hello", bridge_protocol: 1 });
+    expect(records[0]).toEqual({ type: "hello", bridge_protocol: BRIDGE_PROTOCOL });
     expect(records.at(-1)).toEqual({ type: "result", kind: "reply", content: "Hi." });
     expect(records.filter((record) => record.type === "result")).toHaveLength(1);
   });
@@ -95,15 +109,26 @@ describe("runBridge", () => {
       },
     });
     expect(records).toEqual([
-      { type: "hello", bridge_protocol: 1 },
+      { type: "hello", bridge_protocol: BRIDGE_PROTOCOL },
       { type: "event", ...trace },
       { type: "result", kind: "reply", content: "done" },
     ]);
   });
 
-  test("passes the model and the composed system prompt to the host", async () => {
-    let seen: { model: string; system: string } | undefined;
-    await run(request({ instructions: "Be terse.", allow_handoff: true }), {
+  test("passes the model, the composed system prompt and the MCP grants to the host", async () => {
+    let seen:
+      | { model: string; system: string; mcpServers: readonly unknown[] }
+      | undefined;
+    const mcpServers = [
+      {
+        name: "files",
+        command: "npx",
+        args: ["-y", "readonly-files"],
+        env_vars: [],
+        tools: ["lookup"],
+      },
+    ];
+    await run(request({ instructions: "Be terse.", allow_handoff: true, tool_ids: ["files/lookup"], mcp_servers: mcpServers }), {
       async createHost(options) {
         seen = options;
         return fakeHost();
@@ -112,11 +137,12 @@ describe("runBridge", () => {
     expect(seen?.model).toBe("opencode/big-model");
     expect(seen?.system).toContain("Be terse.");
     expect(seen?.system).toContain("handoff");
+    expect(seen?.mcpServers).toEqual(mcpServers);
   });
 
   test("refuses a version outside the window before any host work", async () => {
     let created = false;
-    const { records, code } = await run(request({ bridge_protocol: 2 }), {
+    const { records, code } = await run(request({ bridge_protocol: 1 }), {
       async createHost() {
         created = true;
         return fakeHost();
@@ -125,30 +151,13 @@ describe("runBridge", () => {
     expect(created).toBe(false);
     expect(code).toBe(1);
     expect(records).toEqual([
-      { type: "hello", bridge_protocol: 1 },
+      { type: "hello", bridge_protocol: BRIDGE_PROTOCOL },
       {
         type: "error",
         kind: "bridge_version",
-        message: "The request bridge_protocol 2 is outside the compatible window 1 <= v < 2.",
+        message: "The request bridge_protocol 1 is outside the compatible window 2 <= v < 3.",
       },
     ]);
-  });
-
-  test("refuses a tool grant before any host work", async () => {
-    let created = false;
-    const { records, code } = await run(request({ tool_ids: ["fixture/lookup"] }), {
-      async createHost() {
-        created = true;
-        return fakeHost();
-      },
-    });
-    expect(created).toBe(false);
-    expect(code).toBe(1);
-    expect(records.at(-1)).toEqual({
-      type: "error",
-      kind: "tool_refused",
-      message: "tool_ids are not supported by this provider.",
-    });
   });
 
   test("reports an invalid request as a request error", async () => {
@@ -255,7 +264,7 @@ describe("runBridge", () => {
     ];
     let created = false;
     const { records, code } = await run(
-      { bridge_protocol: 1, operation: "models" },
+      { bridge_protocol: BRIDGE_PROTOCOL, operation: "models" },
       {
         async listModels() {
           return models;
@@ -269,7 +278,7 @@ describe("runBridge", () => {
     expect(created).toBe(false);
     expect(code).toBe(0);
     expect(records).toEqual([
-      { type: "hello", bridge_protocol: 1 },
+      { type: "hello", bridge_protocol: BRIDGE_PROTOCOL },
       { type: "result", kind: "models", models },
     ]);
     expect(records.filter((record) => record.type === "result")).toHaveLength(1);
@@ -277,7 +286,7 @@ describe("runBridge", () => {
 
   test("fails a models request with one error record", async () => {
     const { records, code } = await run(
-      { bridge_protocol: 1, operation: "models" },
+      { bridge_protocol: BRIDGE_PROTOCOL, operation: "models" },
       {
         async listModels() {
           throw new BridgeError("provider", "The model catalog is unavailable.");
@@ -295,7 +304,7 @@ describe("runBridge", () => {
   test("refuses an incompatible version before reading the catalog", async () => {
     let listed = false;
     const { records, code } = await run(
-      { bridge_protocol: 2, operation: "models" },
+      { bridge_protocol: 1, operation: "models" },
       {
         async listModels() {
           listed = true;
@@ -306,5 +315,115 @@ describe("runBridge", () => {
     expect(listed).toBe(false);
     expect(code).toBe(1);
     expect(records.at(-1)).toMatchObject({ type: "error", kind: "bridge_version" });
+  });
+
+  test("answers an integrations request with one descriptor list", async () => {
+    const integrations = [
+      {
+        id: "openai",
+        name: "OpenAI",
+        methods: [
+          { id: "chatgpt-headless", type: "oauth", label: "ChatGPT Pro/Plus (headless)" },
+        ],
+        connected: false,
+      },
+    ];
+    let created = false;
+    const { records, code } = await run(
+      { bridge_protocol: BRIDGE_PROTOCOL, operation: "integrations" },
+      {
+        async listIntegrations() {
+          return integrations;
+        },
+        async createHost() {
+          created = true;
+          return fakeHost();
+        },
+      },
+    );
+    expect(created).toBe(false);
+    expect(code).toBe(0);
+    expect(records).toEqual([
+      { type: "hello", bridge_protocol: BRIDGE_PROTOCOL },
+      { type: "result", kind: "integrations", integrations },
+    ]);
+  });
+
+  test("connect emits the sign-in details, then the connected result", async () => {
+    const seen: { options?: unknown; hooks?: ConnectionHooks } = {};
+    const { records, code } = await run(
+      { bridge_protocol: BRIDGE_PROTOCOL, operation: "connect", integration: "openai" },
+      {
+        async connect(options, hooks) {
+          seen.options = options;
+          seen.hooks = hooks;
+          hooks.onAttempt({
+            attempt_id: "attempt-1",
+            url: "https://auth.openai.com/codex/device",
+            instructions: "Enter code: ABCD",
+            mode: "auto",
+          });
+          return { integration: "openai", method: "chatgpt-headless" };
+        },
+      },
+    );
+    expect(seen.options).toEqual({ integration: "openai" });
+    expect(code).toBe(0);
+    expect(records).toEqual([
+      { type: "hello", bridge_protocol: BRIDGE_PROTOCOL },
+      {
+        type: "oauth",
+        attempt_id: "attempt-1",
+        url: "https://auth.openai.com/codex/device",
+        instructions: "Enter code: ABCD",
+        mode: "auto",
+      },
+      { type: "result", kind: "connected", integration: "openai", method: "chatgpt-headless" },
+    ]);
+  });
+
+  test("connect in code mode reads the code line from the bridge's caller", async () => {
+    let requested = 0;
+    const { code } = await run(
+      { bridge_protocol: BRIDGE_PROTOCOL, operation: "connect", integration: "openai" },
+      {
+        async readCode() {
+          requested += 1;
+          return "the-code";
+        },
+        async connect(_options, hooks) {
+          const attempt = {
+            attempt_id: "attempt-1",
+            url: "https://example.test",
+            instructions: "Paste the code",
+            mode: "code" as const,
+          };
+          hooks.onAttempt(attempt);
+          const received = await hooks.waitForCode(attempt);
+          expect(received).toBe("the-code");
+          return { integration: "openai", method: "example" };
+        },
+      },
+    );
+    expect(requested).toBe(1);
+    expect(code).toBe(0);
+  });
+
+  test("fails a connect attempt with one error record", async () => {
+    const { records, code } = await run(
+      { bridge_protocol: BRIDGE_PROTOCOL, operation: "connect", integration: "openai" },
+      {
+        async connect() {
+          throw new BridgeError("provider", "The provider connection failed. Try again.");
+        },
+      },
+    );
+    expect(code).toBe(1);
+    expect(records.at(-1)).toEqual({
+      type: "error",
+      kind: "provider",
+      message: "The provider connection failed. Try again.",
+    });
+    expect(records.filter((record) => record.type === "result")).toHaveLength(0);
   });
 });

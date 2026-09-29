@@ -41,9 +41,25 @@ test("disabled creation stays on the creation screen and provider switching upda
   assert.match(html, /updateEditEffortOptions\(\{ \.\.\.agent, model_provider: editProviderSelect\.value \}, effort\)/);
 });
 
-test("disabled managed Codex agents keep their model controls enabled after catalog refresh", () => {
+test("disabled managed OpenCode agents keep their model controls enabled after catalog refresh", () => {
   assert.match(html, /const editingAgent = allAgents\.find\(\(item\) => item\.id === \(managedAgentId \|\| agentSelect\.value\)\)/);
   assert.doesNotMatch(html, /const editingAgent = agents\.find/);
+});
+
+test("the provider connection panel drives the OpenCode connection API", () => {
+  for (const id of [
+    "provider-connect", "provider-connect-status", "provider-integration",
+    "provider-connect-button", "provider-connect-details", "provider-connect-instructions",
+    "provider-connect-url", "provider-connect-code", "provider-connect-code-button",
+    "provider-connect-cancel-button",
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `missing ${id}`);
+  }
+  assert.match(html, /request\("\/opencode\/integrations"\)/);
+  assert.match(html, /request\("\/opencode\/connections", \{/);
+  assert.match(html, /\/opencode\/connections\/\$\{encodeURIComponent\(activeConnectionId\)\}\/code/);
+  assert.match(html, /method: "DELETE"/);
+  assert.doesNotMatch(html, /\/codex\/models|Codex|codex login status/);
 });
 
 test("stale tool grants need explicit removal before tool edits and unrelated saves preserve them", () => {

@@ -84,7 +84,7 @@
             "type": "string"
           },
           "model_provider": {
-            "default": "codex",
+            "default": "opencode",
             "maxLength": 40,
             "minLength": 1,
             "title": "Model Provider",
@@ -393,6 +393,66 @@
           "content"
         ],
         "title": "MessageCreate",
+        "type": "object"
+      },
+      "OpenCodeConnectionCode": {
+        "additionalProperties": false,
+        "description": "The code the provider showed the human for a ``code``-mode sign-in.",
+        "properties": {
+          "code": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "OpenCodeConnectionCode",
+        "type": "object"
+      },
+      "OpenCodeConnectionCreate": {
+        "additionalProperties": false,
+        "description": "Start one provider sign-in; the method is chosen when it is omitted.",
+        "properties": {
+          "integration": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Integration",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          }
+        },
+        "required": [
+          "integration"
+        ],
+        "title": "OpenCodeConnectionCreate",
         "type": "object"
       },
       "RoomCreate": {
@@ -819,29 +879,6 @@
         "summary": "Enqueue Human Chat Message"
       }
     },
-    "/codex/models": {
-      "get": {
-        "operationId": "codex_models_codex_models_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  "title": "Response Codex Models Codex Models Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Codex Models"
-      }
-    },
     "/conversations": {
       "post": {
         "operationId": "create_conversation_conversations_post",
@@ -1068,6 +1105,193 @@
           }
         },
         "summary": "List Mcp Tools"
+      }
+    },
+    "/opencode/connections": {
+      "post": {
+        "description": "Start one provider sign-in and return the details the human needs.\n\nThe attempt is owned by this server process; a deployment with several\nAPI workers must route its follow-up calls back to the same worker.",
+        "operationId": "start_opencode_connection_opencode_connections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenCodeConnectionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Start Opencode Connection Opencode Connections Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Opencode Connection"
+      }
+    },
+    "/opencode/connections/{attempt_id}": {
+      "delete": {
+        "operationId": "cancel_opencode_connection_opencode_connections__attempt_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Opencode Connection"
+      },
+      "get": {
+        "operationId": "get_opencode_connection_opencode_connections__attempt_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Opencode Connection Opencode Connections  Attempt Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Opencode Connection"
+      }
+    },
+    "/opencode/connections/{attempt_id}/code": {
+      "post": {
+        "operationId": "submit_opencode_connection_code_opencode_connections__attempt_id__code_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenCodeConnectionCode"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Submit Opencode Connection Code Opencode Connections  Attempt Id  Code Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Opencode Connection Code"
+      }
+    },
+    "/opencode/integrations": {
+      "get": {
+        "description": "Expose the provider integrations and sign-in methods, never a credential.",
+        "operationId": "opencode_integrations_opencode_integrations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Opencode Integrations Opencode Integrations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Opencode Integrations"
       }
     },
     "/opencode/models": {

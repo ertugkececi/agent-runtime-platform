@@ -598,7 +598,7 @@ def test_tenant_roles_route_policy_and_transaction_owner_binding(tmp_path, monke
         assert member.patch(f"/agents/{published}", json={"description":"denied"}, headers=headers).status_code == 403
         assert member.patch(f"/agents/{hidden}", json={"description":"hidden"}, headers=headers).status_code == 404
         assert member.patch(f"/agents/{b_agent_one}", json={"description":"foreign"}, headers=headers).status_code == 404
-        assert member.get("/codex/models").status_code == 403
+        assert member.get("/opencode/models").status_code == 403
         assert member.get("/opencode/models").status_code == 403
         assert member.get("/agent-config/catalog").status_code == 403
         assert member.get("/mcp/tools").status_code == 403

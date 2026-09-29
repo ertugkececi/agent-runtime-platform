@@ -1,4 +1,4 @@
 id = "opencode"
 runtime = "node"
 sdk = "@opencode/sdk>=2.0.18,<3.0"
-supports_tool_ids = false
+supports_tool_ids = true

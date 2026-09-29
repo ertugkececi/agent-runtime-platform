@@ -378,7 +378,7 @@ def test_queued_run_does_not_use_mcp_grants_after_agent_is_disabled(tmp_path, mo
     provider = ToolAwareProvider()
     app = create_app(
         f"sqlite:///{tmp_path / 'mcp-revocation.db'}",
-        ProviderRegistry({"codex": provider}),
+        ProviderRegistry({"opencode": provider}),
     )
     client = TestClient(app)
     agent = client.post("/agents", json={
@@ -408,7 +408,7 @@ def test_queued_run_does_not_use_mcp_grants_after_agent_is_disabled(tmp_path, mo
     app.state.database.dispose()
 
 
-def test_failed_child_retry_rechecks_revoked_codex_grant(tmp_path, monkeypatch):
+def test_failed_child_retry_rechecks_revoked_opencode_grant(tmp_path, monkeypatch):
     import json
     import sys
 
@@ -428,7 +428,7 @@ def test_failed_child_retry_rechecks_revoked_codex_grant(tmp_path, monkeypatch):
     tool_provider = ToolAware()
     app = create_app(
         f"sqlite:///{tmp_path / 'child-revoke.db'}",
-        ProviderRegistry({"openai": parent_provider, "codex": tool_provider}),
+        ProviderRegistry({"openai": parent_provider, "opencode": tool_provider}),
     )
     client = TestClient(app)
     parent = client.post("/agents", json={
@@ -439,9 +439,10 @@ def test_failed_child_retry_rechecks_revoked_codex_grant(tmp_path, monkeypatch):
         f"/chat/conversations/{conversation['id']}/messages/async", json={"content": "Resume child"}
     ).json()["id"]
     child = client.post("/agents", json={
-        "name": "Codex child", "instructions": "Read only", "model_provider": "codex",
+        "name": "OpenCode child", "instructions": "Read only", "model_provider": "opencode",
         "model_name": "test", "capabilities": ["backend"], "tool_ids": ["fixture/lookup"],
     }).json()
+    assert "id" in child, child
     assert claim_one(app.state.runtime) == run_id
     with app.state.database.session() as session:
         root = session.scalar(select(Task).where(Task.root_run_id == run_id, Task.parent_task_id.is_(None)))

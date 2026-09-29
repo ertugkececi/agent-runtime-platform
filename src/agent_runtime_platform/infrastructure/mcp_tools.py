@@ -122,8 +122,13 @@ def validate_tool_ids(tool_ids: list[str], provider: str) -> list[str]:
     return sorted(tool_ids)
 
 
-def codex_mcp_config(tool_ids: list[str]) -> dict[str, Any]:
-    """Build Codex config for only discovered, explicitly trusted tools."""
+def bridge_mcp_servers(tool_ids: list[str]) -> list[dict[str, Any]]:
+    """Group administrator-approved tools for the OpenCode bridge.
+
+    Only the granted tools of each server travel; credentials never do. The
+    ``env_vars`` are names, not values: the bridge host resolves them from its
+    own process environment, whose roots the adapter owns.
+    """
     servers = load_mcp_servers()
     grouped: dict[str, list[str]] = {}
     for tool_id in tool_ids:
@@ -132,35 +137,18 @@ def codex_mcp_config(tool_ids: list[str]) -> dict[str, Any]:
         if definition is None or tool not in definition["read_only_tools"]:
             raise ValueError(f"MCP tool '{tool_id}' is no longer administrator-approved.")
         grouped.setdefault(server, []).append(tool)
-    return {
-        server: {
+    return [
+        {
+            "name": server,
             "command": servers[server]["command"],
-            "args": servers[server].get("args", []),
-            "env_vars": servers[server]["env_vars"],
-            "cwd": servers[server].get("cwd"),
-            "enabled_tools": sorted(names),
-            "default_tools_approval_mode": "approve",
-            "required": True,
+            "args": list(servers[server].get("args", [])),
+            **({"cwd": servers[server]["cwd"]} if servers[server].get("cwd") else {}),
+            "env_vars": list(servers[server]["env_vars"]),
+            "tools": sorted(set(tools)),
         }
-        for server, names in grouped.items()
-    }
+        for server, tools in sorted(grouped.items())
+    ]
 
 
 def public_tool_catalog() -> list[dict[str, Any]]:
     return discover_tools()
-
-
-
-def codex_mcp_overrides(tool_ids: list[str]) -> tuple[str, ...]:
-    """Serialize this run's MCP server catalog as app-server CLI config overrides."""
-    import json
-
-    servers = codex_mcp_config(tool_ids)
-    overrides: list[str] = []
-    for server, config in sorted(servers.items()):
-        prefix = f"mcp_servers.{server}."
-        for field in ("command", "args", "env_vars", "enabled_tools", "default_tools_approval_mode", "required"):
-            overrides.append(f"{prefix}{field}={json.dumps(config[field])}")
-        if config.get("cwd") is not None:
-            overrides.append(f"{prefix}cwd={json.dumps(config['cwd'])}")
-    return tuple(overrides)

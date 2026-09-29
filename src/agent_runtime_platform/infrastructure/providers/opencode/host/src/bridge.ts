@@ -2,11 +2,11 @@
  * The bridge: one request in, the record stream out.
  *
  * The order of the record stream is part of the contract. `hello` is always
- * first. A version mismatch or a tool grant fails before any host work starts.
- * A turn emits `event` records while it runs and ends with exactly one `result`
- * record; a models request ends with the one `result` record that carries the
- * catalog. Every failure path emits exactly one `error` record and a non-zero
- * exit code.
+ * first. A version mismatch fails before any host work starts. A turn emits
+ * `event` records while it runs and ends with exactly one `result` record; a
+ * catalog, integrations or connect request ends with the one `result` record
+ * that answers it, and a connect request emits its `oauth` record first. Every
+ * failure path emits exactly one `error` record and a non-zero exit code.
  */
 
 import {
@@ -20,6 +20,9 @@ import {
   type BridgeRequest,
   type CatalogModel,
   type ErrorRecord,
+  type IntegrationDescriptor,
+  type McpServerRequest,
+  type OauthAttempt,
 } from "./protocol";
 import type { TraceEvent } from "./trace";
 import { buildPromptText, buildSystemPrompt, interpretFinalText } from "./turn";
@@ -36,14 +39,45 @@ export interface TurnHost {
 export interface TurnHostOptions {
   readonly model: string;
   readonly system: string;
+  readonly mcpServers: readonly McpServerRequest[];
 }
 
 export type TurnHostFactory = (options: TurnHostOptions) => Promise<TurnHost>;
+
+/** What a connection attempt asks its caller for, and what it reports. */
+export interface ConnectionHooks {
+  /** The sign-in details the human needs, the moment they exist. */
+  onAttempt: (attempt: OauthAttempt) => void;
+  /** The code the provider showed the human; only called in `code` mode. */
+  waitForCode: (attempt: OauthAttempt) => Promise<string>;
+}
+
+export interface ConnectOptions {
+  readonly integration: string;
+  readonly method?: string;
+  readonly label?: string;
+}
+
+export interface ConnectResult {
+  readonly integration: string;
+  readonly method: string;
+}
+
+export type ConnectRunner = (
+  options: ConnectOptions,
+  hooks: ConnectionHooks,
+) => Promise<ConnectResult>;
 
 export interface BridgeDependencies {
   readonly createHost: TurnHostFactory;
   /** Read the model catalog from one short-lived host. */
   readonly listModels: () => Promise<CatalogModel[]>;
+  /** List the integrations the host offers. */
+  readonly listIntegrations: () => Promise<IntegrationDescriptor[]>;
+  /** Run one connection attempt to completion. */
+  readonly connect: ConnectRunner;
+  /** Read the next request line; only a `code`-mode connection calls this. */
+  readonly readCode: () => Promise<string>;
   readonly write: (record: BridgeRecord) => void;
 }
 
@@ -80,14 +114,39 @@ export async function runBridge(input: string, dependencies: BridgeDependencies)
     }
   }
 
-  if (request.tool_ids.length > 0) {
-    return fail(
-      write,
-      new BridgeError(
-        "tool_refused",
-        "tool_ids are not supported by this provider.",
-      ),
-    );
+  if (request.operation === "integrations") {
+    try {
+      const integrations = await dependencies.listIntegrations();
+      write({ type: "result", kind: "integrations", integrations });
+      return 0;
+    } catch (error) {
+      return fail(write, error);
+    }
+  }
+
+  if (request.operation === "connect") {
+    try {
+      const connected = await dependencies.connect(
+        {
+          integration: request.integration,
+          ...(request.method === undefined ? {} : { method: request.method }),
+          ...(request.label === undefined ? {} : { label: request.label }),
+        },
+        {
+          onAttempt: (attempt) => write({ type: "oauth", ...attempt }),
+          waitForCode: async () => dependencies.readCode(),
+        },
+      );
+      write({
+        type: "result",
+        kind: "connected",
+        integration: connected.integration,
+        method: connected.method,
+      });
+      return 0;
+    } catch (error) {
+      return fail(write, error);
+    }
   }
 
   let host: TurnHost | undefined;
@@ -95,6 +154,7 @@ export async function runBridge(input: string, dependencies: BridgeDependencies)
     host = await dependencies.createHost({
       model: request.model,
       system: buildSystemPrompt(request),
+      mcpServers: request.mcp_servers ?? [],
     });
     // The permission is re-checked before the model sees any work.
     await host.verifyPolicy();

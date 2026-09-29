@@ -295,10 +295,10 @@ def test_migrated_two_owner_route_matrix_and_no_side_effects(tmp_path, monkeypat
         import agent_runtime_platform.api.app as api_module
         monkeypatch.setattr(api_module, "configured_targets", lambda: [{"id": "target-safe", "capabilities": ["work"], "url": "secret", "token": "secret"}])
         monkeypatch.setattr(api_module, "public_tool_catalog", lambda: [{"id": "tool-safe", "name": "safe"}])
-        monkeypatch.setattr(api_module, "list_codex_models", lambda: [{"id": "model-safe"}])
+        monkeypatch.setattr(api_module, "list_opencode_models", lambda: [{"id": "model-safe"}])
         assert client.get("/a2a/targets").json() == [{"id": "target-safe", "kind": "a2a", "capabilities": ["work"]}]
         assert client.get("/mcp/tools").json() == [{"id": "tool-safe", "name": "safe"}]
-        assert client.get("/codex/models").json() == [{"id": "model-safe"}]
+        assert client.get("/opencode/models").json() == [{"id": "model-safe"}]
 
         anonymous = TestClient(app, base_url="https://testserver")
         route_matrix = [
@@ -313,7 +313,7 @@ def test_migrated_two_owner_route_matrix_and_no_side_effects(tmp_path, monkeypat
             ("POST", "/rooms", {"name":"anon","participant_agent_ids":[agent_a,agent_b],"moderator_agent_id":agent_a}),
             ("GET", f"/rooms/{own_room}", None), ("POST", f"/rooms/{own_room}/runs", {"content":"x"}),
             ("GET", f"/rooms/{own_room}/runs", None), ("GET", f"/runs/{sync_agent_run.json()['id']}", None),
-            ("GET", "/a2a/targets", None), ("GET", "/mcp/tools", None), ("GET", "/codex/models", None),
+            ("GET", "/a2a/targets", None), ("GET", "/mcp/tools", None), ("GET", "/opencode/models", None),
         ]
         for method, route, body in route_matrix:
             response = anonymous.request(method, route, json=body) if body is not None else anonymous.request(method, route)
@@ -323,7 +323,7 @@ def test_migrated_two_owner_route_matrix_and_no_side_effects(tmp_path, monkeypat
             stored.scopes = []
             db.commit()
         assert client.get("/agents").status_code == 403
-        for catalog_route in ("/a2a/targets", "/mcp/tools", "/codex/models"):
+        for catalog_route in ("/a2a/targets", "/mcp/tools", "/opencode/models"):
             assert client.get(catalog_route).status_code == 403, catalog_route
         with app.state.database.engine.begin() as connection:
             connection.execute(text("UPDATE tenant_migration_versions SET mapping_sha256='wrong' WHERE revision='tenant_ownership_v1'"))
@@ -334,7 +334,7 @@ def test_migrated_two_owner_route_matrix_and_no_side_effects(tmp_path, monkeypat
             stored.scopes = ["legacy:operator"]
             db.commit()
         assert client.get("/agents").status_code == 503
-        for catalog_route in ("/a2a/targets", "/mcp/tools", "/codex/models"):
+        for catalog_route in ("/a2a/targets", "/mcp/tools", "/opencode/models"):
             assert client.get(catalog_route).status_code == 503, catalog_route
     finally:
         client.close()
