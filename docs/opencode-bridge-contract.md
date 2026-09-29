@@ -1,6 +1,7 @@
 # OpenCode bridge contract
 
-**Status:** draft — first delivery of the OpenCode provider epic (#67).
+**Status:** delivered — the adapter and host on `main` implement this contract;
+epic #67 is complete.
 
 This document pins the one boundary between the Python adapter and the
 TypeScript bridge host: the wire contract on stdin/stdout. Both sides
@@ -75,7 +76,7 @@ than ignored.
 | `allow_handoff` | bool | yes | Whether the result may be a handoff instead of a reply. |
 | `tool_ids` | array | yes | Tool ids for this turn; **must be empty** — see [Tool refusal](#tool-refusal). |
 | `remote_capabilities` | array | optional | Only meaningful when `allow_handoff` is true. |
-| `reasoning_effort` | string | optional | Effort level where the model supports one. |
+| `reasoning_effort` | string | optional | Accepted and type-validated by the host, but not applied: it selects no effort by itself. The effective effort travels as a `#variant` suffix on `model`. The adapter never sends this field; it maps the agent's `model_reasoning_effort` to that suffix when the model name carries none. See [`opencode-provider.md`](opencode-provider.md). |
 
 Example:
 
