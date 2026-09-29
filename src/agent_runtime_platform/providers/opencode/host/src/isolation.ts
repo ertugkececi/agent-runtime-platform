@@ -3,8 +3,8 @@
  *
  * The bridge host must not inherit the invoking user's OpenCode configuration:
  * its config, data, cache and state roots are pointed at a private directory.
- * The adapter may provide its own private root through the environment (the
- * contract's isolation property); this only fills in what is not set.
+ * The adapter provides a private home per call (the contract's isolation
+ * property); this only fills in what the environment left unset.
  *
  * The variables have to be in place before the SDK is imported, because the
  * SDK resolves its global paths at import time. `index.ts` calls this before
@@ -50,6 +50,16 @@ export function preparePrivateHome(
       rmSync(root, { recursive: true, force: true });
     },
   };
+}
+
+/**
+ * Point the process's mode creation at private values: `0600` files and `0700`
+ * directories, whatever umask the invoking shell had. The host calls this
+ * before the SDK is imported, so every file the SDK creates - configuration,
+ * cache, session data - stays private.
+ */
+export function applyPrivateUmask(): number {
+  return process.umask(0o077);
 }
 
 /**

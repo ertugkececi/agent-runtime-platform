@@ -10,13 +10,32 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
-XDG_ROOTS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME")
+HOME_VARIABLES = (
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_STATE_HOME",
+)
 
 
 def record(value: dict) -> None:
     sys.stdout.write(json.dumps(value) + "\n")
     sys.stdout.flush()
+
+
+def environment_report() -> dict:
+    """What the host sees, plus a probe file whose mode proves the child umask."""
+    report = {name: os.environ.get(name) for name in HOME_VARIABLES}
+    home = os.environ.get("HOME")
+    if home:
+        report["home_mode"] = oct(os.stat(home).st_mode & 0o777)
+        probe = Path(home) / "probe.txt"
+        probe.write_text("probe", encoding="utf-8")
+        report["probe_mode"] = oct(probe.stat().st_mode & 0o777)
+    return report
 
 
 def main() -> int:
@@ -29,7 +48,7 @@ def main() -> int:
     env_capture = os.environ.get("FAKE_HOST_ENV_CAPTURE")
     if env_capture:
         with open(env_capture, "w", encoding="utf-8") as handle:
-            json.dump({name: os.environ.get(name) for name in XDG_ROOTS}, handle)
+            json.dump(environment_report(), handle)
 
     if scenario == "silent":
         return 3
@@ -71,12 +90,15 @@ def main() -> int:
             "task": "Find the SQLite schema for queue_jobs.",
         })
     elif scenario == "events":
+        # Extra fields simulate a host that tried to log arguments or results.
         record({
             "type": "event",
             "server": "files",
             "tool": "search",
             "status": "running",
             "phase": "running",
+            "arguments": {"query": "sk-test-secret-value"},
+            "result": "sk-test-secret-value",
         })
         record({"type": "result", "kind": "reply", "content": "Done."})
     elif scenario == "future":

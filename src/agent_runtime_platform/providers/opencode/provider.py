@@ -8,10 +8,15 @@ daemon and no state shared between calls.
 The adapter owns the process: a wall-clock budget from provider configuration
 kills the host on expiry, and every host failure becomes one
 :class:`ProviderError`, so a run fails instead of hanging.
+
+Every call runs in a private home of its own (``0700``, files ``0600``) that
+replaces ``HOME`` and the XDG roots for the child, so the invoking user's
+``~/.config/opencode`` is never read or modified.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -19,10 +24,11 @@ import queue
 import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Iterator, Sequence
 
 from agent_runtime_platform.providers._base import HandoffRequest, ModelOutput, ProviderError
 
@@ -41,11 +47,16 @@ FAILED_REQUEST = "The OpenCode bridge host failed the model request."
 TIMEOUT_MESSAGE = "The OpenCode model request timed out."
 VERSION_MESSAGE = "The OpenCode bridge host reported an incompatible bridge protocol."
 
-# The host fills in a private root for every XDG variable that is left unset,
-# and rejects the invoking user's OpenCode configuration. #82 pins the concrete
-# persistent mechanism; until then the adapter must not hand the child the
-# user's roots in the first place.
-XDG_ROOTS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME")
+# The child never sees the invoking user's roots. HOME and every XDG variable
+# point into one private home per call, so OpenCode resolves its configuration,
+# data, cache and state inside a directory this process owns and removes.
+HOME_VARIABLE = "HOME"
+XDG_ROOTS: tuple[tuple[str, str], ...] = (
+    ("XDG_CONFIG_HOME", "config"),
+    ("XDG_DATA_HOME", "data"),
+    ("XDG_CACHE_HOME", "cache"),
+    ("XDG_STATE_HOME", "state"),
+)
 
 ToolEvent = Callable[[dict[str, str]], None]
 
@@ -129,28 +140,32 @@ class OpenCodeChatProvider:
             payload = json.dumps(request, ensure_ascii=False).encode("utf-8")
         except (TypeError, ValueError) as exc:
             raise ProviderError(FAILED_REQUEST) from exc
-        try:
-            process = subprocess.Popen(
-                command,
-                cwd=str(HOST_ROOT),
-                env=_child_environment(),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                start_new_session=os.name == "posix",
-            )
-        except OSError as exc:
-            raise ProviderError("The OpenCode bridge host could not be started.") from exc
-        try:
+        with _private_home() as home:
             try:
-                process.stdin.write(payload)
-                process.stdin.close()
+                process = subprocess.Popen(
+                    command,
+                    cwd=str(HOST_ROOT),
+                    env=_child_environment(home),
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    start_new_session=os.name == "posix",
+                    # Files the host creates in the private home are 0600 and
+                    # its directories 0700, whatever the server's umask is.
+                    umask=0o077 if os.name == "posix" else None,
+                )
             except OSError as exc:
-                raise ProviderError(FAILED_REQUEST) from exc
-            return _read(process, timeout, on_event)
-        finally:
-            # Every path out of this method leaves no host process behind.
-            if process.poll() is None:
-                _kill(process)
+                raise ProviderError("The OpenCode bridge host could not be started.") from exc
+            try:
+                try:
+                    process.stdin.write(payload)
+                    process.stdin.close()
+                except OSError as exc:
+                    raise ProviderError(FAILED_REQUEST) from exc
+                return _read(process, timeout, on_event)
+            finally:
+                # Every path out of this method leaves no host process behind.
+                if process.poll() is None:
+                    _kill(process)
 
     @staticmethod
     def _default_command() -> list[str]:
@@ -252,9 +267,35 @@ def _catalog_entry(entry: Any) -> dict[str, Any]:
     }
 
 
-def _child_environment() -> dict[str, str]:
-    """The server environment without the invoking user's XDG roots."""
-    return {key: value for key, value in os.environ.items() if key not in XDG_ROOTS}
+def _child_environment(home: Path) -> dict[str, str]:
+    """The server environment with every OpenCode root pointed at ``home``.
+
+    The user's ``HOME`` and XDG values are replaced, never forwarded. Environment
+    variables are how configuration and credentials reach the host, so the rest
+    of the environment is passed through untouched.
+    """
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key != HOME_VARIABLE and key not in dict(XDG_ROOTS)
+    }
+    environment[HOME_VARIABLE] = str(home)
+    for name, directory in XDG_ROOTS:
+        environment[name] = str(home / directory)
+    return environment
+
+
+@contextlib.contextmanager
+def _private_home() -> Iterator[Path]:
+    """A private home for one host call; every path in it is removed at the end."""
+    root = Path(tempfile.mkdtemp(prefix="agent-runtime-opencode-"))
+    root.chmod(0o700)
+    try:
+        for _, directory in XDG_ROOTS:
+            (root / directory).mkdir(mode=0o700)
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def _read(

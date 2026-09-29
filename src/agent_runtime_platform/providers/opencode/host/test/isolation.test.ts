@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { statSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { configDirectory, preparePrivateHome } from "../src/isolation";
+import { applyPrivateUmask, configDirectory, preparePrivateHome } from "../src/isolation";
 
 describe("preparePrivateHome", () => {
   test("points the unset XDG roots at one private directory", () => {
@@ -41,6 +43,35 @@ describe("preparePrivateHome", () => {
       expect(env["XDG_DATA_HOME"]).toBe(`${home.root}/data`);
     } finally {
       home.cleanup();
+    }
+  });
+
+  test("never falls back to the invoking user's home", () => {
+    const env: Record<string, string | undefined> = { HOME: "/home/user" };
+    const home = preparePrivateHome(env);
+    try {
+      expect(home.root).toBeDefined();
+      for (const name of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"]) {
+        expect(env[name]?.startsWith(home.root ?? "\0")).toBe(true);
+        expect(env[name]).not.toContain("/home/user");
+      }
+    } finally {
+      home.cleanup();
+    }
+  });
+});
+
+describe("applyPrivateUmask", () => {
+  test("makes the files the host creates readable only by its user", () => {
+    const root = mkdtempSync(join(tmpdir(), "agent-runtime-umask-"));
+    const previous = applyPrivateUmask();
+    try {
+      const file = join(root, "probe");
+      writeFileSync(file, "probe");
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(previous);
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

@@ -35,7 +35,9 @@ Framing rules:
 - Every record is a JSON object with a `type` field.
 - The process exits `0` if and only if it emitted a `result` record.
 - Every error path emits exactly one `error` record and exits non-zero.
-- Excess bytes on stderr are diagnostic only; stderr is never parsed.
+- Excess bytes on stderr are diagnostic only; stderr is never parsed. An SDK
+  log entry contributes only its severity (`opencode-host warn`); the host
+  never writes prompts, tool arguments, tool results, or credentials to stderr.
 
 ## Versioning and compatibility
 
@@ -189,13 +191,21 @@ secrets, or raw SDK dumps.
 
 ## Isolation
 
-The adapter passes the host a private home directory through the
-environment and it uses `0700` for directories and `0600` for files, the way
-`codex_home.py` does for Codex. The bridge host is run with that private home
-and never the invoking user's OpenCode configuration. On macOS the adapter
-sets the `HOME` (or the SDK's config-root equivalent) for the child process
-to that directory. The contract here is the property, not a specific
-environment variable name; #82 pins the concrete mechanism.
+The adapter gives each call a private home directory and the host never reads
+the invoking user's OpenCode configuration. The concrete mechanism (#82):
+
+- The adapter creates one private home per call (`0700`), passes `HOME` and
+  the four XDG roots (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`,
+  `XDG_STATE_HOME`) pointing inside it, and removes the directory when the call
+  ends. The invoking user's roots are replaced, never forwarded.
+- The child runs with umask `077`, so every file the host creates is `0600`
+  and every directory is `0700`.
+- The host itself still fills in unset roots with a private directory, so a
+  host started outside the adapter never falls back to `~/.config/opencode`;
+  an environment that already provides private roots wins.
+
+This is the property, not a specific variable name: whatever resolves the
+user's configuration must not be reachable from the host process.
 
 ## Timeouts
 

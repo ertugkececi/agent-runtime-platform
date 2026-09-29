@@ -133,6 +133,8 @@ def test_tool_events_reach_the_tool_event_callback(monkeypatch):
     assert events == [
         {"server": "files", "tool": "search", "status": "running", "phase": "running"}
     ]
+    # A host that tried to log arguments or results cannot leak them.
+    assert "sk-test-secret-value" not in json.dumps(events)
 
 
 def test_unknown_record_types_are_ignored(monkeypatch):
@@ -140,14 +142,40 @@ def test_unknown_record_types_are_ignored(monkeypatch):
     assert provider.generate(_agent(), HISTORY) == "Done."
 
 
-def test_the_host_environment_has_no_xdg_roots(monkeypatch, tmp_path):
-    capture = tmp_path / "env.json"
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "user-config"))
+def test_the_child_runs_in_a_private_home(monkeypatch, tmp_path):
+    user_home = tmp_path / "user-home"
+    user_config = user_home / ".config" / "opencode" / "opencode.json"
+    user_config.parent.mkdir(parents=True)
+    user_config.write_text('{"model": "user-choice"}', encoding="utf-8")
+    modified_at = user_config.stat().st_mtime_ns
+
+    monkeypatch.setenv("HOME", str(user_home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(user_home / ".config"))
+    capture = tmp_path / "environment.json"
     provider = _provider(monkeypatch, "reply", FAKE_HOST_ENV_CAPTURE=str(capture))
     provider.generate(_agent(), HISTORY)
-    assert json.loads(capture.read_text(encoding="utf-8")) == dict.fromkeys(
-        ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME")
-    )
+
+    report = json.loads(capture.read_text(encoding="utf-8"))
+    home = Path(report["HOME"])
+    assert home != user_home
+    for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
+        assert Path(report[name]).parent == home
+    # The user's configuration is neither read nor modified.
+    assert user_config.read_text(encoding="utf-8") == '{"model": "user-choice"}'
+    assert user_config.stat().st_mtime_ns == modified_at
+    # The private home does not outlive the call.
+    assert not home.exists()
+    if os.name == "posix":
+        assert report["home_mode"] == "0o700"
+        assert report["probe_mode"] == "0o600"
+
+
+def test_environment_secrets_never_reach_the_request(monkeypatch, tmp_path):
+    capture = tmp_path / "request.json"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-secret-value")
+    provider = _provider(monkeypatch, "reply", FAKE_HOST_CAPTURE=str(capture))
+    provider.generate(_agent(), HISTORY)
+    assert "sk-test-secret-value" not in capture.read_text(encoding="utf-8")
 
 
 def test_a_host_error_record_becomes_a_provider_error(monkeypatch):

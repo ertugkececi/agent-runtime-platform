@@ -62,11 +62,18 @@ package ships.
 ## Configuration and isolation
 
 Configuration reaches the host through its process environment; the request
-never carries credentials. The host does not read the invoking user's
-`~/.config/opencode`: it points OpenCode at a private config directory, and
-when the environment does not already provide private `XDG_*` roots it makes
-its own private root. The session runs in a private working directory, and the
-model catalog is served from the bundled snapshot rather than a network fetch.
+never carries credentials. The adapter gives the host a private home per call:
+`HOME` and every XDG root point into a directory the adapter owns (`0700`,
+removed when the call ends), and the child runs with umask `077`, so files the
+host creates are `0600`. A host started outside the adapter makes its own
+private root for any root the environment left unset, so the invoking user's
+`~/.config/opencode` is never read. The session runs in a private working
+directory, and the model catalog is served from the bundled snapshot rather
+than a network fetch.
+
+The host writes only the severity of an SDK log entry to stderr; messages and
+attributes may carry prompts, tool arguments, or results, and none of those are
+logged.
 
 ## Check it
 
