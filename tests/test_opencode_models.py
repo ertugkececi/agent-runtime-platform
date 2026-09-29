@@ -64,8 +64,8 @@ def test_without_the_flag_the_provider_and_catalog_are_absent(monkeypatch):
         assert refused.json()["detail"] == "The requested model provider is not configured."
         assert client.get("/agent-config/catalog").json() == {
             "providers": [
-                {"id": "codex", "model_catalog_available": True},
-                {"id": "openai", "model_catalog_available": False},
+                {"id": "codex", "supports_tool_ids": True, "model_catalog_url": "/codex/models"},
+                {"id": "openai", "supports_tool_ids": False, "model_catalog_url": None},
             ]
         }
     app.state.database.dispose()
@@ -80,7 +80,7 @@ def test_the_catalog_serves_the_shared_model_shape(monkeypatch):
         assert response.status_code == 200
         assert response.json() == CATALOG
         catalog = client.get("/agent-config/catalog").json()
-        assert {"id": "opencode", "model_catalog_available": True} in catalog["providers"]
+        assert {"id": "opencode", "supports_tool_ids": False, "model_catalog_url": "/opencode/models"} in catalog["providers"]
         created = client.post("/agents", json=_agent(model_reasoning_effort="high"))
         assert created.status_code == 201, created.text
         assert created.json()["model_provider"] == "opencode"

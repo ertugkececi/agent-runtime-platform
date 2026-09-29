@@ -1,6 +1,54 @@
 {
   "components": {
     "schemas": {
+      "AgentConfigCatalog": {
+        "description": "What an agent configuration screen may rely on, and nothing more.",
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/AgentConfigProvider"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers"
+        ],
+        "title": "AgentConfigCatalog",
+        "type": "object"
+      },
+      "AgentConfigProvider": {
+        "description": "One configured provider and the capabilities its manifest declares.\n\n``model_catalog_url`` is the contract path that lists the provider's models\nand their supported reasoning efforts, or ``None`` when it has no catalog.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model_catalog_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Catalog Url"
+          },
+          "supports_tool_ids": {
+            "title": "Supports Tool Ids",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "supports_tool_ids",
+          "model_catalog_url"
+        ],
+        "title": "AgentConfigProvider",
+        "type": "object"
+      },
       "AgentCreate": {
         "additionalProperties": false,
         "properties": {
@@ -448,16 +496,14 @@
     },
     "/agent-config/catalog": {
       "get": {
-        "description": "Expose public provider choices and which provider has a selectable model catalog.",
+        "description": "Expose each configured provider's enforced capabilities, never its configuration.",
         "operationId": "agent_config_catalog_agent_config_catalog_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Agent Config Catalog Agent Config Catalog Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AgentConfigCatalog"
                 }
               }
             },

@@ -95,6 +95,24 @@ class AgentUpdate(BaseModel):
         return _normalize_capabilities(value)
 
 
+class AgentConfigProvider(BaseModel):
+    """One configured provider and the capabilities its manifest declares.
+
+    ``model_catalog_url`` is the contract path that lists the provider's models
+    and their supported reasoning efforts, or ``None`` when it has no catalog.
+    """
+
+    id: str
+    supports_tool_ids: bool
+    model_catalog_url: str | None
+
+
+class AgentConfigCatalog(BaseModel):
+    """What an agent configuration screen may rely on, and nothing more."""
+
+    providers: list[AgentConfigProvider]
+
+
 class RoomCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=120)

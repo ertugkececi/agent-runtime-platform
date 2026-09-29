@@ -14,6 +14,7 @@ from agent_runtime_platform.providers import (
     ProviderRegistry,
     list_codex_models,
     list_opencode_models,
+    supports_tool_ids,
 )
 from agent_runtime_platform.mcp_tools import MCPConfigurationError, public_tool_catalog
 from agent_runtime_platform.rooms import RoomRuntimeService
@@ -30,6 +31,8 @@ from agent_runtime_platform.runtime import (
     RunExecutionFailed,
 )
 from agent_runtime_platform.schemas import (
+    AgentConfigCatalog,
+    AgentConfigProvider,
     AgentCreate,
     AgentUpdate,
     ConversationCreate,
@@ -39,6 +42,10 @@ from agent_runtime_platform.schemas import (
     RoomCreate,
     RoomRunCreate,
 )
+
+# The model catalogs this application serves, by provider. This is HTTP surface,
+# not a provider capability, so it lives next to the routes it names.
+MODEL_CATALOG_URLS = {"codex": "/codex/models", "opencode": "/opencode/models"}
 
 
 def create_app(
@@ -107,16 +114,20 @@ def create_app(
         except MCPConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    @app.get("/agent-config/catalog")
-    def agent_config_catalog(request: Request) -> dict:
-        """Expose public provider choices and which provider has a selectable model catalog."""
+    @app.get("/agent-config/catalog", response_model=AgentConfigCatalog)
+    def agent_config_catalog(request: Request) -> AgentConfigCatalog:
+        """Expose each configured provider's enforced capabilities, never its configuration."""
         ownership_scope(request)
-        return {
-            "providers": [
-                {"id": provider_id, "model_catalog_available": provider_id in {"codex", "opencode"}}
+        return AgentConfigCatalog(
+            providers=[
+                AgentConfigProvider(
+                    id=provider_id,
+                    supports_tool_ids=supports_tool_ids(provider_id),
+                    model_catalog_url=MODEL_CATALOG_URLS.get(provider_id),
+                )
                 for provider_id in provider_registry.configured_provider_ids()
             ]
-        }
+        )
 
     @app.get("/codex/models")
     def codex_models(request: Request) -> list[dict]:
