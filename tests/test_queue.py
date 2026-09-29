@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -463,3 +464,250 @@ def test_failed_child_retry_rechecks_revoked_codex_grant(tmp_path, monkeypatch):
     assert not [event for event in result["events"] if event["type"] == "mcp_tool_call"]
     client.close()
     app.state.database.dispose()
+
+
+class HardTerminationProvider:
+    """Dies mid-call on the configured call numbers, like a SIGKILLed worker."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.crash_calls: set[int] = set()
+        self.reply = "answer after recovery"
+
+    def generate(self, agent: dict[str, Any], history: list[dict[str, str]], *, allow_handoff: bool = False) -> str:
+        self.calls += 1
+        if self.calls in self.crash_calls:
+            raise SystemExit("simulated hard termination during the model call")
+        return self.reply
+
+
+def test_hard_termination_consumes_one_attempt_and_the_retry_replies_once(tmp_path):
+    provider = HardTerminationProvider()
+    provider.crash_calls = {1}
+    url, app, client, conversation_id = setup_chat(tmp_path, provider)
+    run_id = client.post(
+        f"/chat/conversations/{conversation_id}/messages/async", json={"content": "Survive a kill"}
+    ).json()["id"]
+
+    assert claim_one(app.state.runtime) == run_id
+    with pytest.raises(SystemExit):
+        app.state.runtime.execute_queued_run(run_id)
+    # The interrupted attempt is spent, and it left no half-written reply behind.
+    with app.state.database.session() as session:
+        job = session.get(QueueJob, run_id)
+        replies = session.scalars(select(HumanChatMessage).where(
+            HumanChatMessage.run_id == run_id, HumanChatMessage.kind == "agent_response"
+        )).all()
+        assert job.status == "running"
+        assert job.attempts == 1
+        assert replies == []
+    app.state.database.dispose()
+
+    restarted = create_app(url, ProviderRegistry({"openai": provider}))
+    recover_interrupted_jobs(restarted.state.runtime)
+    with restarted.state.database.session() as session:
+        job = session.get(QueueJob, run_id)
+        assert job.status == "pending"
+        assert job.attempts == 1
+    assert restarted.state.runtime.get_run(run_id)["status"] == "queued"
+    assert claim_one(restarted.state.runtime) == run_id
+    restarted.state.runtime.execute_queued_run(run_id)
+
+    result = restarted.state.runtime.get_run(run_id)
+    assert result["status"] == "completed"
+    assert result["queue"] == {"status": "completed", "attempts": 2, "max_attempts": 3}
+    with restarted.state.database.session() as session:
+        replies = session.scalars(select(HumanChatMessage).where(
+            HumanChatMessage.run_id == run_id, HumanChatMessage.kind == "agent_response"
+        )).all()
+        assert [reply.content for reply in replies] == ["answer after recovery"]
+    restarted.state.database.dispose()
+    client.close()
+
+
+def test_hard_termination_never_grants_more_than_three_attempts(tmp_path):
+    provider = HardTerminationProvider()
+    provider.crash_calls = {1, 2, 3}
+    url, app, client, conversation_id = setup_chat(tmp_path, provider)
+    run_id = client.post(
+        f"/chat/conversations/{conversation_id}/messages/async", json={"content": "Never finishes"}
+    ).json()["id"]
+
+    for attempt in (1, 2):
+        assert claim_one(app.state.runtime) == run_id
+        with pytest.raises(SystemExit):
+            app.state.runtime.execute_queued_run(run_id)
+        app.state.database.dispose()
+        app = create_app(url, ProviderRegistry({"openai": provider}))
+        recover_interrupted_jobs(app.state.runtime)
+        with app.state.database.session() as session:
+            job = session.get(QueueJob, run_id)
+            assert job.status == "pending"
+            assert job.attempts == attempt
+        assert app.state.runtime.get_run(run_id)["status"] == "queued"
+
+    assert claim_one(app.state.runtime) == run_id
+    with pytest.raises(SystemExit):
+        app.state.runtime.execute_queued_run(run_id)
+    app.state.database.dispose()
+    app = create_app(url, ProviderRegistry({"openai": provider}))
+    recover_interrupted_jobs(app.state.runtime)
+
+    result = app.state.runtime.get_run(run_id)
+    assert result["status"] == "failed"
+    assert result["queue"] == {"status": "failed", "attempts": 3, "max_attempts": 3}
+    with app.state.database.session() as session:
+        job = session.get(QueueJob, run_id)
+        run = session.get(HumanChatRun, run_id)
+        root_task = session.scalar(select(Task).where(
+            Task.root_run_id == run_id, Task.parent_task_id.is_(None)
+        ))
+        replies = session.scalars(select(HumanChatMessage).where(
+            HumanChatMessage.run_id == run_id, HumanChatMessage.kind == "agent_response"
+        )).all()
+        assert job.status == run.status == root_task.status == "failed"
+        assert job.last_error == run.error_code == root_task.error_code == "worker_interrupted"
+        assert replies == []
+    assert claim_one(app.state.runtime) is None
+    assert provider.calls == 3
+    app.state.database.dispose()
+    client.close()
+
+
+def test_completed_run_is_not_answered_twice_when_a_stale_job_is_recovered(tmp_path):
+    provider = QueueProvider()
+    url, app, client, conversation_id = setup_chat(tmp_path, provider)
+    run_id = client.post(
+        f"/chat/conversations/{conversation_id}/messages/async", json={"content": "Answer once"}
+    ).json()["id"]
+    assert claim_one(app.state.runtime) == run_id
+    app.state.runtime.execute_queued_run(run_id)
+    assert app.state.runtime.get_run(run_id)["status"] == "completed"
+    # A stale claim from a crashed worker must not earn the completed run a second reply.
+    with app.state.database.session() as session:
+        job = session.get(QueueJob, run_id)
+        job.status = "running"
+        session.commit()
+    app.state.database.dispose()
+
+    restarted = create_app(url, ProviderRegistry({"openai": provider}))
+    recover_interrupted_jobs(restarted.state.runtime)
+    assert restarted.state.runtime.get_run(run_id)["status"] == "completed"
+    assert claim_one(restarted.state.runtime) == run_id
+    assert provider.calls == 1
+    restarted.state.runtime.execute_queued_run(run_id)
+    with restarted.state.database.session() as session:
+        job = session.get(QueueJob, run_id)
+        replies = session.scalars(select(HumanChatMessage).where(
+            HumanChatMessage.run_id == run_id, HumanChatMessage.kind == "agent_response"
+        )).all()
+        assert job.status == "completed"
+        assert len(replies) == 1
+    restarted.state.database.dispose()
+    client.close()
+
+
+class DelegationCrashProvider:
+    """Plans one handoff, then dies during the delegated model call."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate(self, agent: dict[str, Any], history: list[dict[str, str]], *, allow_handoff: bool = False) -> str | HandoffRequest:
+        self.calls += 1
+        if self.calls == 1:
+            return HandoffRequest("backend", "First recorded objective")
+        raise SystemExit("simulated hard termination during the delegated call")
+
+
+class ReplanningProvider:
+    """Would propose a different handoff if a retry asked the parent to plan again."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def generate(self, agent: dict[str, Any], history: list[dict[str, str]], *, allow_handoff: bool = False) -> str | HandoffRequest:
+        self.calls.append({"agent_id": agent["id"], "history": history, "allow_handoff": allow_handoff})
+        if allow_handoff:
+            return HandoffRequest("frontend", "A different retry objective")
+        return "child answer" if len(self.calls) == 1 else "final answer"
+
+
+def test_retry_uses_the_first_recorded_handoff_target_and_objective(tmp_path):
+    url = f"sqlite:///{tmp_path / 'handoff-retry.db'}"
+    planning_provider = DelegationCrashProvider()
+    app = create_app(url, ProviderRegistry({"openai": planning_provider}))
+    client = TestClient(app)
+    parent = client.post("/agents", json={
+        "name": "Parent", "instructions": "Delegate once.", "model_provider": "openai", "model_name": "test",
+    }).json()
+    backend = client.post("/agents", json={
+        "name": "Backend", "instructions": "Do backend work.", "model_provider": "openai",
+        "model_name": "test", "capabilities": ["backend"],
+    }).json()
+    frontend = client.post("/agents", json={
+        "name": "Frontend", "instructions": "Do frontend work.", "model_provider": "openai",
+        "model_name": "test", "capabilities": ["frontend"],
+    }).json()
+    conversation = client.post("/chat/conversations", json={"agent_id": parent["id"]}).json()
+    run_id = client.post(
+        f"/chat/conversations/{conversation['id']}/messages/async", json={"content": "Delegate once"}
+    ).json()["id"]
+
+    assert claim_one(app.state.runtime) == run_id
+    with pytest.raises(SystemExit):
+        app.state.runtime.execute_queued_run(run_id)
+    app.state.database.dispose()
+
+    retry_provider = ReplanningProvider()
+    restarted = create_app(url, ProviderRegistry({"openai": retry_provider}))
+    recover_interrupted_jobs(restarted.state.runtime)
+    with restarted.state.database.session() as session:
+        child = session.scalar(select(Task).where(
+            Task.root_run_id == run_id, Task.parent_task_id.is_not(None)
+        ))
+        assert child.agent_id == backend["id"]
+        assert child.objective == "First recorded objective"
+        assert child.status == "queued"
+    assert claim_one(restarted.state.runtime) == run_id
+    restarted.state.runtime.execute_queued_run(run_id)
+
+    result = restarted.state.runtime.get_run(run_id)
+    assert result["status"] == "completed"
+    # The retry never re-planned: no handoff-allowed call, and the original objective
+    # is what the persisted target received.
+    assert [call["allow_handoff"] for call in retry_provider.calls] == [False, False]
+    assert retry_provider.calls[0]["history"] == [{"role": "user", "content": "First recorded objective"}]
+    assert retry_provider.calls[1]["agent_id"] == parent["id"]
+    assert frontend["id"] not in {call["agent_id"] for call in retry_provider.calls}
+    with restarted.state.database.session() as session:
+        children = session.scalars(select(Task).where(
+            Task.root_run_id == run_id, Task.parent_task_id.is_not(None)
+        )).all()
+        assert len(children) == 1
+        assert children[0].agent_id == backend["id"]
+        assert children[0].objective == "First recorded objective"
+        assert children[0].status == "completed"
+        assert children[0].result == "child answer"
+        replies = session.scalars(select(HumanChatMessage).where(
+            HumanChatMessage.run_id == run_id, HumanChatMessage.kind == "agent_response"
+        )).all()
+        assert [reply.content for reply in replies] == ["final answer"]
+    event_types = [event["type"] for event in result["events"]]
+    assert "handoff_resumed" in event_types
+    assert "delegated_task_resumed" in event_types
+    restarted.state.database.dispose()
+    client.close()
+
+
+def test_worker_service_unit_keeps_the_bounded_stop_contract():
+    # README: on a systemd stop only the worker process is signalled, it stops
+    # claiming new work, and the in-flight model call gets at most 300 seconds
+    # before the process group is killed. Keep the shipped unit in sync.
+    unit = (
+        Path(__file__).resolve().parents[1]
+        / "deploy" / "systemd" / "user" / "agent-runtime-worker.service"
+    ).read_text(encoding="utf-8")
+    assert "KillMode=mixed" in unit
+    assert "TimeoutStopSec=300" in unit
+    assert "Restart=on-failure" in unit
