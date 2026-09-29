@@ -159,3 +159,8 @@ Doğrulanmış `Principal` içindeki issuer, subject ve tenant DB `tenant_owners
 Anonim business isteği 401, authenticated fakat `legacy:operator` scope'u olmayan oturum 403, yabancı/olmayan root veya child 404, body'deki kimlik iddiası 422'tir. Bu sınırlı dilimde tek mapped legacy owner tüm tenant içi agent'ları yönetebilir; tenant-admin/published-agent/public role ayrımı yoktur ve varmış gibi tanıtılmaz. `/codex/models`, `/mcp/tools`, `/a2a/targets` process düzeyi kataloglardır: resource auth `off` iken mevcut OIDC davranışını korurlar; `legacy_owner` iken doğrulanmış owner mapping ve `legacy:operator` scope kapısından da geçerler. Kataloglar tenant resource listesi değildir ve owner filtresi uygulamazlar. Yanıtlar yalnız güvenli model/tool/target discovery alanlarını içerir; provider secret, target URL/token veya gizli global yapılandırma döndürülmez.
 
 Issue #36 kapsamındaki değişiklik canlı DB backfill, OIDC/auth açma, role yönetimi, public listener, incoming A2A veya PostgreSQL apply yapmaz. Feature flag ancak ayrı operasyonel release kararı, yeni tutarlı yedek/restore kontrolü, gerçek issuer+subject doğrulaması ve PostgreSQL/service-backed testleri sonrasında değerlendirilmelidir.
+
+
+## 14. Issue #92: opt-in tenant roles
+
+Issue #36 above remains the `legacy_owner` policy. Issue #92 adds a separate `tenant_roles` mode without changing off/legacy schemas or behavior. Its role revision, membership lookup, admin/member + published-agent access rules, root owner binding, worker rechecks and offline-only migration procedure are documented in [tenant-roles.md](tenant-roles.md). The feature remains off by default and is SQLite-only; do not apply its migration or enable the flag on a live service/database as part of this code change.
