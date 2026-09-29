@@ -258,12 +258,15 @@ class A2AClient:
                      remote_task_id: str | None, *, on_remote_task, on_status) -> str:
         if self._endpoint is None:
             self.validate_card(capability)
+        endpoint = self._endpoint
+        if endpoint is None:
+            raise A2AError("remote_target_unavailable")
         headers = self._headers()
         if remote_task_id:
             return self._poll(remote_task_id, headers, on_status)
         # POST errors are ambiguous: never retry this message automatically.
         try:
-            body = self._json("POST", self._endpoint + "/message:send",
+            body = self._json("POST", endpoint + "/message:send",
                 headers={**headers, "Content-Type": "application/a2a+json"}, json_body={
                     "message": {"messageId": message_id, "role": "ROLE_USER", "parts": [{"text": objective}]},
                     **({"tenant": self._tenant} if self._tenant is not None else {}),
@@ -295,13 +298,16 @@ class A2AClient:
         return self._poll(task["id"], headers, on_status)
 
     def _poll(self, task_id: str, headers: dict, on_status) -> str:
+        endpoint = self._endpoint
+        if endpoint is None:
+            raise A2AError("remote_target_unavailable")
         max_wait = max(1, min(float(self.target.get("max_wait_seconds", 60)), 300))
         interval = max(0.05, min(float(self.target.get("poll_interval_seconds", 1)), 10))
         deadline = time.monotonic() + max_wait
         while time.monotonic() < deadline:
             try:
                 task = self._json(
-                    "GET", self._endpoint + "/tasks/" + quote(task_id, safe=""),
+                    "GET", endpoint + "/tasks/" + quote(task_id, safe=""),
                     headers=headers,
                     params={"tenant": self._tenant} if self._tenant is not None else None,
                     deadline=deadline,

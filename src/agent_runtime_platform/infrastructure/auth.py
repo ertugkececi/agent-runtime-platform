@@ -76,10 +76,10 @@ class OIDCConfig:
         if mode != "oidc":
             raise RuntimeError("AGENT_RUNTIME_AUTH_MODE must be 'off' or 'oidc'.")
         required = {
-            "AGENT_RUNTIME_OIDC_ISSUER": os.getenv("AGENT_RUNTIME_OIDC_ISSUER"),
-            "AGENT_RUNTIME_OIDC_CLIENT_ID": os.getenv("AGENT_RUNTIME_OIDC_CLIENT_ID"),
-            "AGENT_RUNTIME_OIDC_REDIRECT_URI": os.getenv("AGENT_RUNTIME_OIDC_REDIRECT_URI"),
-            "AGENT_RUNTIME_OIDC_LEGACY_SUB": os.getenv("AGENT_RUNTIME_OIDC_LEGACY_SUB"),
+            "AGENT_RUNTIME_OIDC_ISSUER": os.getenv("AGENT_RUNTIME_OIDC_ISSUER") or "",
+            "AGENT_RUNTIME_OIDC_CLIENT_ID": os.getenv("AGENT_RUNTIME_OIDC_CLIENT_ID") or "",
+            "AGENT_RUNTIME_OIDC_REDIRECT_URI": os.getenv("AGENT_RUNTIME_OIDC_REDIRECT_URI") or "",
+            "AGENT_RUNTIME_OIDC_LEGACY_SUB": os.getenv("AGENT_RUNTIME_OIDC_LEGACY_SUB") or "",
         }
         missing = [name for name, value in required.items() if not value]
         if missing:
@@ -429,7 +429,9 @@ def install_auth_routes(app: FastAPI, auth: OIDCAuth | None) -> None:
             principal = auth.load_principal(session_id)
         except (RuntimeError, SQLAlchemyError) as exc:
             raise HTTPException(status_code=503, detail="Tenant membership authorization is unavailable.") from exc
-        if principal is None:
+        if principal is None or session_id is None:
+            # Without a session cookie load_principal returns None; the second
+            # check makes the non-None session id the CSRF token needs explicit.
             return {"authenticated": False, "auth_enabled": True}
         # Derive a stable synchronizer token from the opaque HttpOnly session secret.
         csrf_token = base64.urlsafe_b64encode(

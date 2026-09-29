@@ -31,10 +31,11 @@ class WorkerAlreadyRunning(RuntimeError):
 def acquire_worker_lock(runtime) -> int:
     """Use an OS advisory lock so only one local worker can recover/claim this DB."""
     url = make_url(runtime.database.url)
-    if url.get_backend_name() == "sqlite" and url.database in (None, "", ":memory:"):
-        raise ValueError("The queue worker requires a persistent SQLite database file.")
     if url.get_backend_name() == "sqlite":
-        identity = str(Path(url.database).expanduser().resolve())
+        database_path = url.database
+        if not database_path or database_path == ":memory:":
+            raise ValueError("The queue worker requires a persistent SQLite database file.")
+        identity = str(Path(database_path).expanduser().resolve())
     else:
         identity = url.render_as_string(hide_password=True)
     key = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]

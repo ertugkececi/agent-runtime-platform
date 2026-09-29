@@ -31,6 +31,7 @@ agent-runtime-tenant-role-migrate = "agent_runtime_platform.infrastructure.tenan
 
 [project.optional-dependencies]
 dev = [
+    "mypy>=2.3,<3.0",
     "pytest>=8.0,<9.0",
 ]
 
@@ -43,6 +44,15 @@ packages = ["src/agent_runtime_platform"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.mypy]
+# The source tree is the covered set: every module in it type-checks with zero
+# errors. A path is added here only once it holds that bar; see
+# docs/type-checking.md.
+files = ["src/agent_runtime_platform"]
+python_version = "3.11"
+warn_unused_ignores = true
+warn_redundant_casts = true
 
 [tool.ruff]
 target-version = "py311"

@@ -14,12 +14,17 @@ import tomllib
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import TypeVar
 
 from agent_runtime_platform.infrastructure.providers._base import ProviderError
 
 MANIFEST_ROOT = Path(__file__).resolve().parent
 
 _RUNTIMES = frozenset({"python", "node"})
+
+# The value types a manifest field may declare. The generic is bounded so
+# `_require` returns the declared type instead of `object`.
+_Field = TypeVar("_Field", str, bool)
 
 
 @dataclass(frozen=True)
@@ -85,7 +90,7 @@ def _build(provider_id: str, data: dict[str, object]) -> ProviderManifest:
     return manifest
 
 
-def _require(provider_id: str, data: dict[str, object], field: str, kind: type) -> object:
+def _require(provider_id: str, data: dict[str, object], field: str, kind: type[_Field]) -> _Field:
     if field not in data:
         raise ProviderError(f"The manifest for provider '{provider_id}' is missing '{field}'.")
     value = data[field]

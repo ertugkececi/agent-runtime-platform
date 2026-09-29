@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import uuid
+from collections.abc import Sequence
 from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -125,6 +126,8 @@ def _backup_sqlite(engine: Engine, destination: Path) -> None:
     raw = engine.raw_connection()
     try:
         source = raw.driver_connection
+        if source is None:
+            raise MigrationError("SQLite connection is unavailable.")
         target = sqlite3.connect(destination)
         try:
             source.backup(target)
@@ -194,7 +197,7 @@ def _ensure_unambiguous_legacy_graph(engine: Engine) -> None:
         if model_table.name not in actual_tables:
             continue
         expected = {(fk.parent.name, fk.column.table.name, fk.column.name) for fk in model_table.foreign_keys}
-        actual = set()
+        actual: set[tuple[str, str, str]] = set()
         for fk in inspect(engine).get_foreign_keys(model_table.name):
             actual.update((local, fk["referred_table"], remote)
                           for local, remote in zip(fk["constrained_columns"], fk["referred_columns"]))
@@ -204,14 +207,14 @@ def _ensure_unambiguous_legacy_graph(engine: Engine) -> None:
     with engine.connect() as connection:
         for table in ("human_chat_sessions",):
             if table in tables:
-                orphan = connection.execute(text(
+                orphan: int = connection.execute(text(
                     "SELECT COUNT(*) FROM human_chat_sessions h "
                     "LEFT JOIN conversations c ON c.id=h.conversation_id WHERE c.id IS NULL"
                 )).scalar_one()
                 if orphan:
                     raise MigrationError(f"Found {orphan} human chat sessions without a conversation.")
         if engine.dialect.name == "sqlite":
-            triggers = connection.execute(text(
+            triggers: Sequence[str] = connection.execute(text(
                 "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('agents','conversations','rooms')"
             )).scalars().all()
             expected_triggers = {f"trg_{table}_legacy_owner_{action}" for table in ROOT_TABLES for action in ("insert", "update")}
@@ -461,7 +464,7 @@ def migrate(engine: Engine, issuer: str, subject: str, tenant_id: str, backup_pa
             ), {"issuer": issuer, "subject": subject}).first()
             if existing and (existing.id != owner_id or existing.tenant_id != tenant_id):
                 raise MigrationError("Stored owner mapping conflicts with deterministic migration identity.")
-            other = connection.execute(text("SELECT COUNT(*) FROM tenant_owners")).scalar_one()
+            other: int = connection.execute(text("SELECT COUNT(*) FROM tenant_owners")).scalar_one()
             if other and not existing:
                 raise MigrationError("Database has a different tenant owner mapping; refusing to reassign legacy data.")
             connection.execute(text(

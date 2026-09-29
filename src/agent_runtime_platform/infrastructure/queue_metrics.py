@@ -44,7 +44,10 @@ RECOVERY_EVENT_TYPES = frozenset({"worker_recovered"})
 # Model calls appear as generic calls (messaging runs) or as room turns.
 MODEL_CALL_START_TYPES = frozenset({"model_call_started", "room_turn_started"})
 MODEL_CALL_END_TYPES = frozenset({"model_call_completed", "room_turn_completed"})
-PARENT_MODELS = {
+# The three run families share a shape, not a base class. SQLAlchemy's stubs
+# cannot type a class selected through a variable, so the rows read here are
+# `Any`: the column names are asserted by tests and by the metric definitions.
+PARENT_MODELS: dict[str, tuple[type[Any], type[Any]]] = {
     "run": (Run, RunEvent),
     "human_chat": (HumanChatRun, HumanChatRunEvent),
     "room": (RoomRun, RoomRunEvent),
@@ -176,16 +179,18 @@ def collect_queue_metrics(
         jobs = list(session.scalars(select(QueueJob)))
         parents: dict[str, dict[str, Any]] = {}
         events: dict[str, dict[str, list[_Event]]] = {}
-        for kind, (parent_model, event_model) in PARENT_MODELS.items():
-            parents[kind] = {row.id: row for row in session.scalars(select(parent_model))}
+        for parent_kind, (parent_model, event_model) in PARENT_MODELS.items():
+            parent_rows: list[Any] = list(session.scalars(select(parent_model)))
+            parents[parent_kind] = {row.id: row for row in parent_rows}
             grouped: dict[str, list[_Event]] = {}
-            for row in session.scalars(
+            event_rows: list[Any] = list(session.scalars(
                 select(event_model).order_by(event_model.run_id, event_model.sequence)
-            ):
+            ))
+            for row in event_rows:
                 grouped.setdefault(row.run_id, []).append(
                     _Event(row.event_type, row.payload or {}, _utc(row.created_at), row.sequence)
                 )
-            events[kind] = grouped
+            events[parent_kind] = grouped
 
     kind_by_run = {run_id: kind for kind, rows in parents.items() for run_id in rows}
     analysis: list[dict[str, Any]] = []

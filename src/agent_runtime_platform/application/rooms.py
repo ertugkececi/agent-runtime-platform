@@ -12,7 +12,12 @@ from agent_runtime_platform.domain.models import (
     new_id,
 )
 from agent_runtime_platform.infrastructure.providers import HandoffRequest, ProviderError, ProviderRegistry
-from agent_runtime_platform.application.resource_auth import OwnershipScope, scoped_root, unique_run_parent
+from agent_runtime_platform.application.resource_auth import (
+    OwnershipScope,
+    ResourceAuthorization,
+    scoped_root,
+    unique_run_parent,
+)
 from agent_runtime_platform.application.runtime import (
     AgentDisabledError, AgentNotFoundError, InvalidMessageError,
     _agent_snapshot, _public_snapshot,
@@ -29,6 +34,9 @@ def _append_event(session: Session, run: RoomRun, event_type: str, payload: dict
 
 class RoomRuntimeService:
     """Bounded sequential room runs with one durable result per agent turn."""
+
+    # Assigned by the composition root (api.app.create_app) after construction.
+    resource_auth: ResourceAuthorization | None = None
 
     def __init__(self, database: Database, providers: ProviderRegistry) -> None:
         self.database = database
@@ -198,20 +206,20 @@ class RoomRuntimeService:
             for index, turn in enumerate(turns):
                 with self.database.session() as session:
                     run = session.get(RoomRun, run_id)
-                    turn = session.scalar(select(RoomRunTurn).where(
+                    current_turn = session.scalar(select(RoomRunTurn).where(
                         RoomRunTurn.run_id == run_id, RoomRunTurn.position == turn.position
                     ))
-                    if run is None or turn is None:
+                    if run is None or current_turn is None:
                         raise RuntimeError("Room run turn disappeared.")
-                    if turn.status == "completed":
-                        snapshot = next(item for item in run.agent_snapshots if item["id"] == turn.agent_id)
-                        contributions.append((turn, snapshot))
+                    if current_turn.status == "completed":
+                        snapshot = next(item for item in run.agent_snapshots if item["id"] == current_turn.agent_id)
+                        contributions.append((current_turn, snapshot))
                         continue
-                    snapshot = next(item for item in run.agent_snapshots if item["id"] == turn.agent_id)
-                    self._assert_worker_agent_access(session, run.room_id, turn.agent_id)
-                    turn.status = "running"
+                    snapshot = next(item for item in run.agent_snapshots if item["id"] == current_turn.agent_id)
+                    self._assert_worker_agent_access(session, run.room_id, current_turn.agent_id)
+                    current_turn.status = "running"
                     _append_event(session, run, "room_turn_started", {
-                        "position": turn.position, "agent_id": turn.agent_id,
+                        "position": current_turn.position, "agent_id": current_turn.agent_id,
                         "phase": "moderator_summary" if index == len(turns) - 1 else "participant",
                     })
                     session.commit()
@@ -254,15 +262,15 @@ class RoomRuntimeService:
                 answer = output.strip()
                 with self.database.session() as session:
                     run = session.get(RoomRun, run_id)
-                    turn = session.scalar(select(RoomRunTurn).where(
+                    current_turn = session.scalar(select(RoomRunTurn).where(
                         RoomRunTurn.run_id == run_id, RoomRunTurn.position == turn.position
                     ))
-                    if run is None or turn is None:
+                    if run is None or current_turn is None:
                         raise RuntimeError("Room run turn disappeared before persistence.")
-                    if turn.status != "completed":
-                        turn.content = answer
-                        turn.status = "completed"
-                        turn.completed_at = datetime.now(timezone.utc)
+                    if current_turn.status != "completed":
+                        current_turn.content = answer
+                        current_turn.status = "completed"
+                        current_turn.completed_at = datetime.now(timezone.utc)
                         if is_summary:
                             run.final_answer = answer
                             run.status = "completed"
@@ -273,13 +281,13 @@ class RoomRuntimeService:
                             job.status = "completed"
                             job.updated_at = run.completed_at
                         _append_event(session, run, "room_turn_completed", {
-                            "position": turn.position, "agent_id": turn.agent_id,
+                            "position": current_turn.position, "agent_id": current_turn.agent_id,
                             "is_moderator": is_summary,
                         })
                         if is_summary:
                             _append_event(session, run, "run_completed", {"status": "completed"})
                         session.commit()
-                contributions.append((turn, snapshot))
+                contributions.append((current_turn, snapshot))
 
             with self.database.session() as session:
                 run = session.get(RoomRun, run_id)
