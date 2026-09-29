@@ -291,8 +291,8 @@ Kalıcı kuyruk ilk sürümde SQLite ile aynı sunucuda çalışan tek bir işç
 ## Sonraki aşamalar
 
 1. Auth/principal dilimi (#32, PR #33): varsayılan kapalı OIDC PKCE public-client login, browser-bound state, sabit tek legacy `iss/sub`, server session/CSRF kapısı. Bu, çok kullanıcılı erişim değildir ve tenant/resource izolasyonu içermez.
-2. Tenant migration (#34): offline SQLite migration kodu PR #35 ile tamamlandı; canlı backfill ve PostgreSQL doğrulaması release gate olarak açık.
-3. Resource authorization (#36/#92): default-off legacy-owner and optional tenant-role/published-agent policies. Migration is offline-only and SQLite validated; live backfill and PostgreSQL validation remain release gates.
+2. Tenant migration (#34): offline SQLite migration kodu PR #35 ile tamamlandı; canlı backfill ve PostgreSQL doğrulaması release gate olarak açıktır ([release gate listesi](docs/release-gates.md)).
+3. Resource authorization (#36/#92): default-off legacy-owner and optional tenant-role/published-agent policies. Migration is offline-only and SQLite validated; live backfill and PostgreSQL validation remain release gates ([release gate checklist](docs/release-gates.md)).
 4. Dağıtık kuyruk kararını yalnızca ölçümler veya açık bir çok-host/yüksek erişilebilirlik gereksinimi mevcut tasarımı yetersiz kıldığında yeniden değerlendir: [karar ve ölçüm kapısı](docs/queue-scaling-decision.md).
 5. Zamanlanmış görevler, bellek, onay akışları ve görsel ajan ilişkileri editörü.
 
