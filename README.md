@@ -180,6 +180,7 @@ API belgeleri `http://127.0.0.1:8000/docs` adresinde açılır. Kontrolleri çal
 
 ```bash
 uv run pytest
+uv run mypy
 ```
 
 Tarayıcı sohbetini `http://127.0.0.1:8000/` adresinden açın. İlk ajanı oluşturmak için soldaki formdan Codex modelini, o modelin desteklediği düşünme eforunu ve talimatları seçin; ardından ajanla mesajlaşabilirsiniz. Model ve efor seçenekleri sunucudaki Codex SDK kataloğundan alınır. Sohbet geçmişi veritabanında tutulur ve sayfa yenilendiğinde yüklenir.

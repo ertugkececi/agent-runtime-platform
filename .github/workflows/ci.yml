@@ -22,6 +22,19 @@ jobs:
       - name: Lint
         run: uvx ruff@0.16.9 check .
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --extra dev --locked
+      - name: Type check
+        run: uv run mypy
+
   test:
     runs-on: ubuntu-latest
     steps:

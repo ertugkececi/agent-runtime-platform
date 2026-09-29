@@ -141,24 +141,28 @@ class OpenCodeChatProvider:
         except (TypeError, ValueError) as exc:
             raise ProviderError(FAILED_REQUEST) from exc
         with _private_home() as home:
+            popen_options: dict[str, Any] = {
+                "cwd": str(HOST_ROOT),
+                "env": _child_environment(home),
+                "stdin": subprocess.PIPE,
+                "stdout": subprocess.PIPE,
+                "start_new_session": os.name == "posix",
+            }
+            if os.name == "posix":
+                # Files the host creates in the private home are 0600 and
+                # its directories 0700, whatever the server's umask is.
+                popen_options["umask"] = 0o077
             try:
-                process = subprocess.Popen(
-                    command,
-                    cwd=str(HOST_ROOT),
-                    env=_child_environment(home),
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    start_new_session=os.name == "posix",
-                    # Files the host creates in the private home are 0600 and
-                    # its directories 0700, whatever the server's umask is.
-                    umask=0o077 if os.name == "posix" else None,
-                )
+                process = subprocess.Popen(command, **popen_options)
             except OSError as exc:
                 raise ProviderError("The OpenCode bridge host could not be started.") from exc
             try:
+                stdin = process.stdin
+                if stdin is None:
+                    raise ProviderError(FAILED_REQUEST)
                 try:
-                    process.stdin.write(payload)
-                    process.stdin.close()
+                    stdin.write(payload)
+                    stdin.close()
                 except OSError as exc:
                     raise ProviderError(FAILED_REQUEST) from exc
                 return _read(process, timeout, on_event)

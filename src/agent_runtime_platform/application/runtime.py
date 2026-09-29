@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy import case, func, select, text
@@ -29,7 +30,16 @@ from agent_runtime_platform.domain.models import (
 from agent_runtime_platform.infrastructure.providers import HandoffRequest, ProviderError, ProviderRegistry
 from agent_runtime_platform.infrastructure.mcp_tools import validate_tool_ids
 from agent_runtime_platform.infrastructure.a2a import A2AClient, A2AError, configured_targets, target_fingerprint
-from agent_runtime_platform.application.resource_auth import OwnershipScope, scoped_root, unique_run_parent
+from agent_runtime_platform.application.resource_auth import (
+    OwnershipScope,
+    ResourceAuthorization,
+    scoped_root,
+    unique_run_parent,
+)
+
+if TYPE_CHECKING:
+    # Imported for typing only: rooms.py imports this module at runtime.
+    from agent_runtime_platform.application.rooms import RoomRuntimeService
 
 
 class AgentNotFoundError(Exception):
@@ -206,8 +216,29 @@ def _append_human_chat_event(
     )
 
 
+def _require_task(session: Session, task_id: str) -> Task:
+    """Load a task the caller has already established must exist."""
+    task = session.get(Task, task_id)
+    if task is None:
+        raise RuntimeError("The delegated task disappeared.")
+    return task
+
+
+def _require_chat_run(session: Session, run_id: str) -> HumanChatRun:
+    """Load a human-chat run the caller has already established must exist."""
+    run = session.get(HumanChatRun, run_id)
+    if run is None:
+        raise RuntimeError("The human chat run disappeared.")
+    return run
+
+
 class AgentRuntimeService:
     """Product services and one reusable, data-driven LangGraph workflow."""
+
+    # Assigned by the composition root (api.app.create_app) after construction.
+    # None keeps the service usable without resource authorization or rooms.
+    resource_auth: ResourceAuthorization | None = None
+    room_runtime: RoomRuntimeService | None = None
 
     def __init__(self, database: Database, providers: ProviderRegistry) -> None:
         self.database = database
@@ -278,7 +309,7 @@ class AgentRuntimeService:
             agents = session.scalars(statement.order_by(Agent.created_at, Agent.id)).all()
             resource_auth = getattr(self, "resource_auth", None)
             if resource_auth is not None and resource_auth.mode == "tenant_roles":
-                published_by_id = dict(session.execute(text(
+                published_by_id: dict[str, Any] = dict(session.execute(text(
                     "SELECT id,published FROM agents WHERE id IN (" + ",".join(":id" + str(i) for i in range(len(agents))) + ")"
                 ), {"id" + str(i): agent.id for i, agent in enumerate(agents)}).all()) if agents else {}
                 return [_agent_payload(agent, bool(published_by_id[agent.id])) for agent in agents]
@@ -323,7 +354,7 @@ class AgentRuntimeService:
                 session.commit()
             resource_auth = getattr(self, "resource_auth", None)
             if resource_auth is not None and resource_auth.mode == "tenant_roles":
-                published_value = session.execute(text("SELECT published FROM agents WHERE id=:id"), {"id":agent.id}).scalar_one()
+                published_value: Any = session.execute(text("SELECT published FROM agents WHERE id=:id"), {"id":agent.id}).scalar_one()
                 return _agent_payload(agent, bool(published_value))
             return _agent_payload(agent)
 
@@ -398,7 +429,7 @@ class AgentRuntimeService:
             .order_by(Message.sequence)
         ).all()
         chat_session = session.get(HumanChatSession, conversation.id)
-        chat_messages = []
+        chat_messages: Sequence[HumanChatMessage] = []
         if chat_session is not None:
             chat_messages = session.scalars(
                 select(HumanChatMessage)
@@ -482,11 +513,12 @@ class AgentRuntimeService:
                 target_query = select(Agent).where(Agent.id == recipient_agent_id)
                 if owner_scope is not None:
                     target_query = target_query.where(scoped_root(Agent, owner_scope))
-                target = session.scalar(target_query)
-                if target is None:
+                matched_target = session.scalar(target_query)
+                if matched_target is None:
                     raise AgentNotFoundError(recipient_agent_id)
-                if not target.enabled:
+                if not matched_target.enabled:
                     raise AgentDisabledError("Disabled agents cannot send or receive new messages.")
+                target = matched_target
 
             members = set(
                 session.scalars(
@@ -724,7 +756,7 @@ class AgentRuntimeService:
                         HumanChatMessage.sender_type == "user",
                     ).limit(1)
                 )
-                messages = session.scalars(
+                chat_messages = session.scalars(
                     select(HumanChatMessage)
                     .where(
                         HumanChatMessage.conversation_id == chat_run.conversation_id,
@@ -737,7 +769,7 @@ class AgentRuntimeService:
                         "role": "user" if message.sender_type == "user" else "assistant",
                         "content": message.content,
                     }
-                    for message in messages
+                    for message in chat_messages
                 ]
                 target_config = dict(chat_run.target_config_snapshot)
                 if self.resource_auth is not None and self.resource_auth.mode == "tenant_roles":
@@ -842,7 +874,9 @@ class AgentRuntimeService:
             current_agent = session.scalar(statement)
             if scope is not None and current_agent is None:
                 raise RuntimeError("The persisted run agent is outside its parent conversation owner scope.")
-            if conversation_id is not None and scope is not None and self.resource_auth.mode == "tenant_roles":
+            if conversation_id is not None and scope is not None:
+                # No-op unless tenant roles are active; the worker re-checks the
+                # persisted agent against the conversation's verified owner.
                 self._assert_worker_agent_access(session, conversation_id, agent["id"])
             if current_agent is not None:
                 active_agent_version = current_agent.version
@@ -1046,16 +1080,14 @@ class AgentRuntimeService:
 
         assert target is not None and child_id is not None
         with self.database.session() as session:
-            child = session.get(Task, child_id)
-            if child is None:
-                raise RuntimeError("The remote delegated task disappeared.")
+            child = _require_task(session, child_id)
             if child.status == "completed":
                 return self._a2a_result_history(history, request, child, child.config_snapshot, child.result, None)
             if child.remote_task_id is None and child.remote_status in {"submitting", "submission_unknown", "completed"}:
                 child.remote_status = "submission_unknown"
                 child.status = "failed"; child.error_code = "submission_unknown"
                 child.completed_at = datetime.now(timezone.utc)
-                run = session.get(HumanChatRun, run_id)
+                run = _require_chat_run(session, run_id)
                 _append_human_chat_event(session, run, "delegated_task_failed", {"task_id": child.id, "error_code": child.error_code, "remote_message_id": child.remote_message_id, "remote_status": child.remote_status})
                 session.commit()
                 return self._a2a_result_history(history, request, child, child.config_snapshot, None, child.error_code)
@@ -1068,7 +1100,7 @@ class AgentRuntimeService:
                     child.status = "failed"; child.error_code = "remote_validation_failed"
                     child.remote_status = getattr(exc, "code", "remote_validation_failed")
                     child.completed_at = datetime.now(timezone.utc)
-                    run = session.get(HumanChatRun, run_id)
+                    run = _require_chat_run(session, run_id)
                     _append_human_chat_event(session, run, "delegated_task_failed", {"task_id": child.id, "error_code": child.error_code, "remote_message_id": child.remote_message_id, "remote_status": child.remote_status})
                     session.commit()
                     return self._a2a_result_history(history, request, child, child.config_snapshot, None, child.error_code)
@@ -1079,25 +1111,28 @@ class AgentRuntimeService:
 
         def persist_remote_task(remote_id: str) -> None:
             with self.database.session() as session:
-                child = session.get(Task, child_id); run = session.get(HumanChatRun, run_id)
+                child = _require_task(session, child_id); run = _require_chat_run(session, run_id)
                 child.remote_task_id = remote_id; child.remote_status = "working"
                 _append_human_chat_event(session, run, "a2a_remote_task_created", {"task_id": child_id, "remote_target_id": target["id"], "remote_message_id": child.remote_message_id, "remote_task_id": remote_id, "remote_status": "working"})
                 session.commit()
         def persist_status(status_value: str, remote_id: str | None) -> None:
             with self.database.session() as session:
-                child = session.get(Task, child_id); run = session.get(HumanChatRun, run_id)
+                child = _require_task(session, child_id); run = _require_chat_run(session, run_id)
                 child.remote_status = status_value
                 if remote_id and not child.remote_task_id:
                     child.remote_task_id = remote_id
                 _append_human_chat_event(session, run, "a2a_remote_task_status", {"task_id": child_id, "remote_target_id": target["id"], "remote_message_id": child.remote_message_id, "remote_task_id": remote_id, "remote_status": status_value})
                 session.commit()
+        remote_message_id = child.remote_message_id
+        if remote_message_id is None:
+            raise RuntimeError("The remote delegated task has no message id.")
         try:
-            result = client.send_or_poll(request.capability, request.task, child.remote_message_id, child.remote_task_id,
+            result = client.send_or_poll(request.capability, request.task, remote_message_id, child.remote_task_id,
                                          on_remote_task=persist_remote_task, on_status=persist_status)
         except Exception as exc:
             code = getattr(exc, "code", "remote_error")
             with self.database.session() as session:
-                child = session.get(Task, child_id); run = session.get(HumanChatRun, run_id)
+                child = _require_task(session, child_id); run = _require_chat_run(session, run_id)
                 child.status = "failed"; child.error_code = "remote_error"
                 child.remote_status = ("timeout" if code == "task_timeout" else code) if child.remote_task_id else "submission_unknown"
                 child.completed_at = datetime.now(timezone.utc)
@@ -1107,7 +1142,7 @@ class AgentRuntimeService:
             return self._a2a_result_history(history, request, child, child.config_snapshot, None, "remote_error")
         else:
             with self.database.session() as session:
-                child = session.get(Task, child_id); run = session.get(HumanChatRun, run_id)
+                child = _require_task(session, child_id); run = _require_chat_run(session, run_id)
                 child.status = "completed"; child.result = result; child.error_code = None
                 child.remote_status = "completed"; child.completed_at = datetime.now(timezone.utc)
                 _append_human_chat_event(session, run, "delegated_task_completed", {"task_id": child.id, "target_type": "a2a", "remote_target_id": target["id"], "remote_task_id": child.remote_task_id})
@@ -1182,7 +1217,7 @@ class AgentRuntimeService:
                 )
                 if owner_scope is not None:
                     candidate_query = candidate_query.where(scoped_root(Agent, owner_scope))
-                candidates = session.scalars(candidate_query).all()
+                candidates = list(session.scalars(candidate_query).all())
 
             _append_human_chat_event(
                 session,
@@ -1329,7 +1364,7 @@ class AgentRuntimeService:
         child_result: str | None = None
         child_error_code: str | None = None
         try:
-            child_result = self._call_provider(
+            provider_output = self._call_provider(
                 run_id=run_id,
                 agent=child_agent,
                 history=[{"role": "user", "content": request.task}],
@@ -1337,8 +1372,9 @@ class AgentRuntimeService:
                 allow_handoff=False,
                 task_id=child_task_id,
             )
-            if isinstance(child_result, HandoffRequest):
+            if isinstance(provider_output, HandoffRequest):
                 raise ProviderError("A delegated agent cannot recursively hand off another task.")
+            child_result = provider_output
         except Exception as exc:
             child_error_code = "provider_error" if isinstance(exc, ProviderError) else "runtime_error"
             with self.database.session() as session:
@@ -1420,7 +1456,12 @@ class AgentRuntimeService:
                 raise RuntimeError("Run disappeared before response persistence.")
             if (run is not None and run.status == "completed") or (chat_run is not None and chat_run.status == "completed"):
                 return {}
-            conversation_id = run.conversation_id if run is not None else chat_run.conversation_id
+            if run is not None:
+                conversation_id = run.conversation_id
+            else:
+                if chat_run is None:
+                    raise RuntimeError("Run disappeared before response persistence.")
+                conversation_id = chat_run.conversation_id
             conversation = session.get(Conversation, conversation_id)
             if conversation is None:
                 raise RuntimeError("Conversation disappeared before response persistence.")
@@ -1446,7 +1487,9 @@ class AgentRuntimeService:
                     job.status = "completed"
                     job.updated_at = datetime.now(timezone.utc)
             else:
-                response = HumanChatMessage(
+                if chat_run is None:
+                    raise RuntimeError("Run disappeared before response persistence.")
+                chat_response = HumanChatMessage(
                     id=new_id(),
                     run_id=chat_run.id,
                     conversation_id=chat_run.conversation_id,
@@ -1456,7 +1499,7 @@ class AgentRuntimeService:
                     content=state["reply"],
                     kind="agent_response",
                 )
-                session.add(response)
+                session.add(chat_response)
                 chat_run.status = "completed"
                 chat_run.completed_at = datetime.now(timezone.utc)
                 root_task = session.scalar(
@@ -1474,7 +1517,7 @@ class AgentRuntimeService:
                     session,
                     chat_run,
                     "agent_response_saved",
-                    {"message_id": response.id, "task_id": root_task.id},
+                    {"message_id": chat_response.id, "task_id": root_task.id},
                 )
                 job = session.get(QueueJob, chat_run.id)
                 if job is not None:
@@ -1644,12 +1687,12 @@ class AgentRuntimeService:
             if chat_run is None:
                 room_runtime = getattr(self, "room_runtime", None)
                 return room_runtime.get_run(run_id, owner_scope) if room_runtime is not None else None
-            events = session.scalars(
+            chat_events = session.scalars(
                 select(HumanChatRunEvent)
                 .where(HumanChatRunEvent.run_id == run_id)
                 .order_by(HumanChatRunEvent.sequence)
             ).all()
-            messages = session.scalars(
+            chat_messages = session.scalars(
                 select(HumanChatMessage)
                 .where(HumanChatMessage.run_id == run_id)
                 .order_by(HumanChatMessage.sequence)
@@ -1678,7 +1721,7 @@ class AgentRuntimeService:
                 **({"queue": queue_payload} if (queue_payload := self._queue_payload(session, chat_run.id)) else {}),
                 "messages": [
                     _human_chat_message_payload(message, chat_run.target_agent_id)
-                    for message in messages
+                    for message in chat_messages
                 ],
                 "tasks": [_task_payload(task) for task in tasks],
                 "events": [
@@ -1688,7 +1731,7 @@ class AgentRuntimeService:
                         "payload": event.payload,
                         "created_at": event.created_at.isoformat(),
                     }
-                    for event in events
+                    for event in chat_events
                 ],
                 "started_at": chat_run.started_at.isoformat(),
                 "completed_at": chat_run.completed_at.isoformat() if chat_run.completed_at else None,

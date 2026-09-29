@@ -41,7 +41,12 @@ class OpenAIChatProvider:
         try:
             from langchain_openai import ChatOpenAI
 
-            model = ChatOpenAI(model=agent["model_name"], api_key=api_key)
+            model = ChatOpenAI(
+                model=agent["model_name"],
+                # The field annotation omits plain strings, but its pydantic
+                # validator accepts one; LangChain documents a string key.
+                api_key=api_key,  # type: ignore[arg-type]
+            )
             instructions = agent["instructions"]
             if allow_handoff:
                 instructions += (
@@ -52,11 +57,13 @@ class OpenAIChatProvider:
                 if remote_caps:
                     instructions += " Available administrator-configured remote A2A capabilities: " + ", ".join(remote_caps) + ". Use an exact listed capability only when useful."
 
-                model = model.bind_tools([self._HANDOFF_TOOL])
             messages = [("system", instructions)] + [
                 (item["role"], item["content"]) for item in history
             ]
-            response = model.invoke(messages)
+            if allow_handoff:
+                response = model.bind_tools([self._HANDOFF_TOOL]).invoke(messages)
+            else:
+                response = model.invoke(messages)
         except ProviderError:
             raise
         except Exception as exc:

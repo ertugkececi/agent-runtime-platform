@@ -54,7 +54,8 @@ def create_app(
     providers: ProviderRegistry | None = None,
 ) -> FastAPI:
     load_dotenv(override=False)
-    database = Database(database_url or os.getenv("AGENT_RUNTIME_DATABASE_URL", "sqlite:///./data/agent_runtime.db"))
+    url = database_url or os.getenv("AGENT_RUNTIME_DATABASE_URL") or "sqlite:///./data/agent_runtime.db"
+    database = Database(url)
     auth_config = OIDCConfig.from_environment()
     auth = OIDCAuth(auth_config, database) if auth_config else None
     provider_registry = providers or ProviderRegistry()

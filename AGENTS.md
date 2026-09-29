@@ -40,10 +40,11 @@ Each provider uses its own **official SDK in the stack that SDK targets**. Capab
 ```sh
 uv sync --extra dev            # first time
 uv run ruff check .            # lint; CI runs uvx ruff@0.16.9
+uv run mypy                    # type check; the covered set is in pyproject.toml
 uv run pytest -q               # python tests
 node --test tests/*.test.js    # ui tests
 ```
 
-`.github/workflows/ci.yml` runs the same three checks on Linux and is the authority.
+`.github/workflows/ci.yml` runs the same four checks on Linux and is the authority. `docs/type-checking.md` states what the type gate covers and the rules for adding to it.
 
 Local Windows runs differ: `os.fchmod`, POSIX mode bits and `fcntl` are unavailable, so a handful of tests cannot pass there. If you change dependencies, run `uv lock` and commit `uv.lock`; CI installs with `--locked`.

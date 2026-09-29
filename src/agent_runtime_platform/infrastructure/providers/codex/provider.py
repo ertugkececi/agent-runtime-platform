@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import json
 import tempfile
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_runtime_platform.infrastructure.providers._base import HandoffRequest, ModelOutput, ProviderError
+
+if TYPE_CHECKING:
+    # The SDK is imported lazily at call time (see test_provider_modules.py);
+    # this import exists only for the handoff schema annotation.
+    from openai_codex.models import JsonObject
 
 
 def list_codex_models() -> list[dict[str, Any]]:
@@ -27,7 +32,7 @@ def list_codex_models() -> list[dict[str, Any]]:
 class CodexChatProvider:
     """Run local Codex using the server user's existing ChatGPT login."""
 
-    _HANDOFF_SCHEMA = {
+    _HANDOFF_SCHEMA: JsonObject = {
         "type": "object",
         "properties": {
             "type": {"type": "string", "enum": ["reply", "handoff"]},
@@ -114,14 +119,20 @@ class CodexChatProvider:
                             "web_search": "disabled",
                         },
                     )
-                    turn = thread.turn(
-                        prompt,
-                        **({"output_schema": self._HANDOFF_SCHEMA} if allow_handoff else {}),
+                    turn = (
+                        thread.turn(prompt, output_schema=self._HANDOFF_SCHEMA)
+                        if allow_handoff
+                        else thread.turn(prompt)
                     )
                     from openai_codex import TurnResult
                     from openai_codex.models import (
                         ItemCompletedNotification,
                         TurnCompletedNotification,
+                    )
+                    from openai_codex.generated.v2_all import (
+                        AgentMessageThreadItem,
+                        McpToolCallThreadItem,
+                        MessagePhase,
                     )
 
                     items = []
@@ -130,8 +141,8 @@ class CodexChatProvider:
                         payload = notification.payload
                         if isinstance(payload, ItemCompletedNotification) and payload.turn_id == turn.id:
                             items.append(payload.item)
-                            item = payload.item.root if hasattr(payload.item, "root") else payload.item
-                            if getattr(item, "type", None) == "mcpToolCall" and callable(tool_event_callback):
+                            item = payload.item.root
+                            if isinstance(item, McpToolCallThreadItem) and callable(tool_event_callback):
                                 tool_event_callback({
                                     "server": item.server,
                                     "tool": item.tool,
@@ -144,13 +155,12 @@ class CodexChatProvider:
                     final_response = None
                     fallback_response = None
                     for entry in reversed(items):
-                        item = entry.root if hasattr(entry, "root") else entry
-                        if getattr(item, "type", None) != "agentMessage":
+                        item = entry.root
+                        if not isinstance(item, AgentMessageThreadItem):
                             continue
                         if fallback_response is None:
                             fallback_response = item.text
-                        phase = getattr(item.phase, "value", item.phase)
-                        if phase == "final_answer":
+                        if item.phase == MessagePhase.final_answer:
                             final_response = item.text
                             break
                     result = TurnResult(
