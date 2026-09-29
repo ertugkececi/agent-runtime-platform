@@ -270,7 +270,7 @@ Bu ilk dilim mevcut kayıtları bir kullanıcıya migrate etmez ve endpoint'lere
 | İşlev | Mevcut durum |
 | --- | --- |
 | Ajan yönetimi | API üzerinden ajan oluşturma, düzenleme ve devre dışı bırakma kullanılabilir. |
-| Model seçimi | Varsayılan Codex (ChatGPT girişi) ve isteğe bağlı OpenAI API sağlayıcısı ile ajan başına model adı desteklenir. OpenAI sağlayıcısı MCP araç izni almayı reddeder. |
+| Model seçimi | Varsayılan Codex (ChatGPT girişi), isteğe bağlı OpenAI API sağlayıcısı ve varsayılan kapalı OpenCode sağlayıcısı ile ajan başına model adı desteklenir. OpenAI sağlayıcısı MCP araç izni almayı reddeder; OpenCode sağlayıcısı tüm araç izinlerini reddeder. Kurulum ve sınırlar: [OpenCode sağlayıcı belgesi](docs/opencode-provider.md). |
 | Yeteneğe göre keşif | Etkin ajanlar tam yetenek eşleşmesiyle aranır; tekil olmayan veya boş eşleşme açık hata verir. |
 | Ajanlar arası mesajlaşma | İki ajan arasında kimlikle veya tekil yetenek eşleşmesiyle doğrudan mesajlaşma kullanılabilir. |
 | İnsan-ajan sohbeti | Yerel tek kullanıcılı arayüzden sohbet başlatılır; konuşma geçmişi kalıcıdır. |
