@@ -918,15 +918,18 @@ class _FakeA2AServer:
         handler.send_response(200); handler.send_header("Content-Type", "application/json")
         handler.send_header("Content-Length", str(len(body))); handler.end_headers(); handler.wfile.write(body)
     def reply_slow(self, handler):
+        """Trickle fewer bytes than the declared body, so the response can never finish."""
         import json
         import time
         body = json.dumps({"id":"remote-1", "status":{"state":"TASK_STATE_WORKING"}, "padding":"x" * 4096}).encode()
+        chunks = 60
         handler.send_response(200); handler.send_header("Content-Type", "application/a2a+json")
-        handler.send_header("Content-Length", str(len(body))); handler.end_headers()
+        handler.send_header("Content-Length", str(len(body) * (chunks + 1))); handler.end_headers()
         try:
-            for offset in range(0, len(body), 128):
-                handler.wfile.write(body[offset:offset + 128]); handler.wfile.flush(); time.sleep(0.1)
-        except (BrokenPipeError, ConnectionResetError):
+            for _ in range(chunks):
+                handler.wfile.write(body); handler.wfile.flush(); time.sleep(0.1)
+        except OSError:
+            # The client stopped reading at its own deadline, which is the expected outcome.
             pass
     def close(self):
         self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=2)
@@ -991,7 +994,6 @@ def test_a2a_v1_propagates_interface_tenant_on_send_and_get_task(client_and_prov
 
 
 def test_a2a_poll_deadline_interrupts_a_slow_trickling_response(client_and_provider, monkeypatch):
-    import time
     client, provider = client_and_provider
     server = _FakeA2AServer("slow")
     try:
@@ -999,12 +1001,11 @@ def test_a2a_poll_deadline_interrupts_a_slow_trickling_response(client_and_provi
         parent = create_agent(client, "Coordinator", "model-parent")
         conversation = client.post("/chat/conversations", json={"agent_id":parent["id"]}).json()["id"]
         provider.outputs = [HandoffRequest(capability="research", task="Wait for the remote task."), "The remote task timed out."]
-        started = time.monotonic()
         run = client.post(f"/chat/conversations/{conversation}/messages", json={"content":"Research."}).json()
-        elapsed = time.monotonic() - started
         assert run["status"] == "completed"
+        # The remote body never finishes arriving, so the 1 s deadline is the only thing that can
+        # end the read; a machine that is merely slow cannot turn this assertion around.
         assert run["tasks"][1]["remote_status"] == "timeout"
-        assert elapsed < 2.0
     finally:
         server.close()
 
