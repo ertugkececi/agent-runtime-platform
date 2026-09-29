@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from agent_runtime_platform.openapi_contract import CONTRACT_PATH, contract_drift
+from agent_runtime_platform.api.openapi_contract import CONTRACT_PATH, contract_drift
 
 
 def test_committed_contract_matches_the_application():

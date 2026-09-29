@@ -17,13 +17,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = ROOT / "contracts" / "openapi.json"
 
 
 def current_contract() -> dict:
     """Build the OpenAPI document from the application as it is now."""
-    from agent_runtime_platform.api import create_app
+    from agent_runtime_platform.api.app import create_app
 
     app = create_app(database_url="sqlite:///:memory:")
     try:

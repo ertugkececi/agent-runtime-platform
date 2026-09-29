@@ -21,8 +21,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.types import ASGIApp
 
-from agent_runtime_platform.database import Database
-from agent_runtime_platform.models import AuthSession
+from agent_runtime_platform.infrastructure.database import Database
+from agent_runtime_platform.domain.models import AuthSession
 
 COOKIE_NAME = "__Host-agent_runtime_session"
 FLOW_COOKIE_NAME = "__Host-agent_runtime_oidc_flow"

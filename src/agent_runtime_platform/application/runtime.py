@@ -8,8 +8,8 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy import case, func, select, text
 from sqlalchemy.orm import Session
 
-from agent_runtime_platform.database import Database
-from agent_runtime_platform.models import (
+from agent_runtime_platform.infrastructure.database import Database
+from agent_runtime_platform.domain.models import (
     Agent,
     AgentCapability,
     Conversation,
@@ -26,10 +26,10 @@ from agent_runtime_platform.models import (
     new_id,
     utc_now,
 )
-from agent_runtime_platform.providers import HandoffRequest, ProviderError, ProviderRegistry
-from agent_runtime_platform.mcp_tools import validate_tool_ids
-from agent_runtime_platform.a2a import A2AClient, A2AError, configured_targets, target_fingerprint
-from agent_runtime_platform.resource_auth import OwnershipScope, scoped_root, unique_run_parent
+from agent_runtime_platform.infrastructure.providers import HandoffRequest, ProviderError, ProviderRegistry
+from agent_runtime_platform.infrastructure.mcp_tools import validate_tool_ids
+from agent_runtime_platform.infrastructure.a2a import A2AClient, A2AError, configured_targets, target_fingerprint
+from agent_runtime_platform.application.resource_auth import OwnershipScope, scoped_root, unique_run_parent
 
 
 class AgentNotFoundError(Exception):

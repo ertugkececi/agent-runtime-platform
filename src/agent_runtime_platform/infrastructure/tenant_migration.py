@@ -18,7 +18,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.engine import Engine
 
-from agent_runtime_platform.models import Base
+from agent_runtime_platform.domain.models import Base
 
 REVISION = "tenant_ownership_v1"
 ROOT_TABLES = ("agents", "conversations", "rooms")

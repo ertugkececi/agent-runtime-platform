@@ -10,15 +10,15 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 
-from agent_runtime_platform.api import create_app
-from agent_runtime_platform.auth import COOKIE_NAME
-from agent_runtime_platform.models import (
+from agent_runtime_platform.api.app import create_app
+from agent_runtime_platform.infrastructure.auth import COOKIE_NAME
+from agent_runtime_platform.domain.models import (
     Agent, AgentCapability, AuthSession, Conversation, ConversationMember, HumanChatRun, HumanChatMessage,
     HumanChatRunEvent, HumanChatSession, Message, QueueJob, Room, RoomParticipant, RoomRun,
     RoomRunEvent, RoomRunTurn, Run, RunEvent, Task,
 )
-from agent_runtime_platform.providers import HandoffRequest, ProviderRegistry
-from agent_runtime_platform.tenant_migration import _ids, migrate
+from agent_runtime_platform.infrastructure.providers import HandoffRequest, ProviderRegistry
+from agent_runtime_platform.infrastructure.tenant_migration import _ids, migrate
 
 ISSUER = "https://issuer.example.test"
 SUBJECT = "legacy-owner"
@@ -157,7 +157,7 @@ def test_migrated_two_owner_route_matrix_and_no_side_effects(tmp_path, monkeypat
             connection.execute(text(f"UPDATE {table} SET tenant_id=:tenant, owner_id=:owner WHERE id=:id"), {
                 "tenant": other_tenant, "owner": other_owner, "id": root_id,
             })
-        from agent_runtime_platform.tenant_migration import _create_write_guard
+        from agent_runtime_platform.infrastructure.tenant_migration import _create_write_guard
         _create_write_guard(connection, "sqlite", TENANT, owner_id)
 
     client, headers, session_secret = _insert_authenticated_session(app)
@@ -234,7 +234,7 @@ def test_migrated_two_owner_route_matrix_and_no_side_effects(tmp_path, monkeypat
         assert tuple(_count(app.state.database, model) for model in mutation_models) == before
 
         # Worker handoff candidate lookup and retry bind to the chat run's tenant owner.
-        import agent_runtime_platform.runtime as runtime_module
+        import agent_runtime_platform.application.runtime as runtime_module
         monkeypatch.setattr(runtime_module, "configured_targets", lambda: [])
         with app.state.database.session() as db:
             db.add_all([
@@ -292,7 +292,7 @@ def test_migrated_two_owner_route_matrix_and_no_side_effects(tmp_path, monkeypat
             "moderator_agent_id": agent_a, "owner_id": owner_id}, headers=headers).status_code == 422
 
         # Process-global catalog routes retain legacy operator access and expose only their safe summaries.
-        import agent_runtime_platform.api as api_module
+        import agent_runtime_platform.api.app as api_module
         monkeypatch.setattr(api_module, "configured_targets", lambda: [{"id": "target-safe", "capabilities": ["work"], "url": "secret", "token": "secret"}])
         monkeypatch.setattr(api_module, "public_tool_catalog", lambda: [{"id": "tool-safe", "name": "safe"}])
         monkeypatch.setattr(api_module, "list_codex_models", lambda: [{"id": "model-safe"}])
@@ -381,7 +381,7 @@ def test_inconsistent_migrated_schema_fails_closed(tmp_path, monkeypatch, damage
             connection.execute(text("INSERT INTO tenant_owners(id,tenant_id,oidc_issuer,oidc_subject) VALUES (:id,'tenant-b','https://other.example.test','owner-b')"), {"id": other_owner})
             connection.execute(text('DROP TRIGGER "trg_agents_legacy_owner_update"'))
             connection.execute(text("UPDATE agents SET tenant_id='tenant-b',owner_id=:owner WHERE id=:id"), {"owner": other_owner, "id": agent_id})
-            from agent_runtime_platform.tenant_migration import _create_write_guard
+            from agent_runtime_platform.infrastructure.tenant_migration import _create_write_guard
             _create_write_guard(connection, "sqlite", TENANT, owner_id)
     _auth_env(monkeypatch)
     with pytest.raises(RuntimeError):

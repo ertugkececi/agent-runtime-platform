@@ -7,7 +7,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
-from agent_runtime_platform.codex_login import main
+from agent_runtime_platform.infrastructure.codex_login import main
 
 
 class CodexLoginTests(unittest.TestCase):

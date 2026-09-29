@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from agent_runtime_platform.mcp_tools import validate_tool_ids
-from agent_runtime_platform.providers._base import HandoffRequest, ProviderError
-from agent_runtime_platform.providers.opencode.provider import (
+from agent_runtime_platform.infrastructure.mcp_tools import validate_tool_ids
+from agent_runtime_platform.infrastructure.providers._base import HandoffRequest, ProviderError
+from agent_runtime_platform.infrastructure.providers.opencode.provider import (
     DEFAULT_TIMEOUT_SECONDS,
     MAXIMUM_TIMEOUT_SECONDS,
     TIMEOUT_ENV,

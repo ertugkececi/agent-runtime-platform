@@ -7,9 +7,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from agent_runtime_platform.api import create_app
-from agent_runtime_platform.models import QueueJob, RoomRun, RoomRunTurn
-from agent_runtime_platform.providers import ProviderRegistry
+from agent_runtime_platform.api.app import create_app
+from agent_runtime_platform.domain.models import QueueJob, RoomRun, RoomRunTurn
+from agent_runtime_platform.infrastructure.providers import ProviderRegistry
 from agent_runtime_platform.queue_worker import claim_one, recover_interrupted_jobs
 
 
@@ -248,7 +248,7 @@ def test_interrupted_room_run_resumes_without_duplicating_completed_turn(tmp_pat
 
 
 def test_startup_recovery_fails_terminal_room_job_and_marks_unfinished_turns(tmp_path):
-    from agent_runtime_platform.models import QueueJob
+    from agent_runtime_platform.domain.models import QueueJob
 
     provider = RoomProvider(crash_on_call=2)
     url, app, client, agents = setup_room(tmp_path, provider, count=2)

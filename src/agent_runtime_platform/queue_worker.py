@@ -13,10 +13,10 @@ from pathlib import Path
 from sqlalchemy import select, update
 from sqlalchemy.engine import make_url
 
-from agent_runtime_platform.api import create_app
-from agent_runtime_platform.models import HumanChatRun, QueueJob, RoomRun, RoomRunEvent, RoomRunTurn, Run, Task
-from agent_runtime_platform.runtime import _append_event, _append_human_chat_event
-from agent_runtime_platform.resource_auth import unique_run_parent
+from agent_runtime_platform.api.app import create_app
+from agent_runtime_platform.domain.models import HumanChatRun, QueueJob, RoomRun, RoomRunEvent, RoomRunTurn, Run, Task
+from agent_runtime_platform.application.runtime import _append_event, _append_human_chat_event
+from agent_runtime_platform.application.resource_auth import unique_run_parent
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)

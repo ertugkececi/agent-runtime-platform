@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_runtime_platform.openapi_contract import contract_drift, write_contract  # noqa: E402
+from agent_runtime_platform.api.openapi_contract import contract_drift, write_contract  # noqa: E402
 
 
 def main() -> int:

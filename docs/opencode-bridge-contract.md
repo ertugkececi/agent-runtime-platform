@@ -245,6 +245,6 @@ untouched.
 
 - Issue #77 (this delivery) and epic #67.
 - `docs/handover.md` — decisions taken for the epic and the delivery order.
-- `src/agent_runtime_platform/providers/codex/provider.py` — the pattern this
+- `src/agent_runtime_platform/infrastructure/providers/codex/provider.py` — the pattern this
   bridge mirrors.
-- `src/agent_runtime_platform/codex_home.py` — the isolation pattern.
+- `src/agent_runtime_platform/infrastructure/codex_home.py` — the isolation pattern.

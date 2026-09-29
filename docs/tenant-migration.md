@@ -17,7 +17,7 @@ PostgreSQL dry-run and apply are both hard-disabled in the current tool until se
 Run during a maintenance window with API and worker writers stopped. Use a restored copy first.
 
 ```sh
-uv run python -m agent_runtime_platform.tenant_migration \
+uv run python -m agent_runtime_platform.infrastructure.tenant_migration \
   --database-url sqlite:////srv/agent-runtime/agent_runtime.db \
   --issuer 'https://issuer.example/' --subject 'stable-sub' --tenant-id 'legacy'
 ```
@@ -25,7 +25,7 @@ uv run python -m agent_runtime_platform.tenant_migration \
 After reviewing the report and confirming the exact claims, exercise apply on a disposable copy:
 
 ```sh
-uv run python -m agent_runtime_platform.tenant_migration \
+uv run python -m agent_runtime_platform.infrastructure.tenant_migration \
   --database-url sqlite:////tmp/agent_runtime-copy.db \
   --issuer 'https://issuer.example/' --subject 'stable-sub' --tenant-id 'legacy' --apply \
   --backup-dir /tmp/agent-runtime-backups

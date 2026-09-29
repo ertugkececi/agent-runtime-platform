@@ -8,9 +8,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_runtime_platform.api import create_app
-from agent_runtime_platform.providers import ProviderRegistry
-from agent_runtime_platform.queue_metrics import collect_queue_metrics, main
+from agent_runtime_platform.api.app import create_app
+from agent_runtime_platform.infrastructure.providers import ProviderRegistry
+from agent_runtime_platform.infrastructure.queue_metrics import collect_queue_metrics, main
 from agent_runtime_platform.queue_worker import claim_one, recover_interrupted_jobs
 
 

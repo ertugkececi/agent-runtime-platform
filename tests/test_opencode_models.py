@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from agent_runtime_platform.api import create_app
-from agent_runtime_platform.providers import ProviderError, ProviderRegistry
+from agent_runtime_platform.api.app import create_app
+from agent_runtime_platform.infrastructure.providers import ProviderError, ProviderRegistry
 
 FLAG = "AGENT_RUNTIME_FEATURE_PROVIDER_OPENCODE"
 
@@ -73,7 +73,7 @@ def test_without_the_flag_the_provider_and_catalog_are_absent(monkeypatch):
 
 def test_the_catalog_serves_the_shared_model_shape(monkeypatch):
     monkeypatch.setenv(FLAG, "on")
-    monkeypatch.setattr("agent_runtime_platform.api.list_opencode_models", lambda: CATALOG)
+    monkeypatch.setattr("agent_runtime_platform.api.app.list_opencode_models", lambda: CATALOG)
     app = create_app(database_url="sqlite:///:memory:")
     with TestClient(app) as client:
         response = client.get("/opencode/models")
@@ -111,7 +111,7 @@ def test_an_unavailable_catalog_is_reported_as_unavailable(monkeypatch):
     def unavailable() -> list[dict]:
         raise ProviderError("The OpenCode bridge host could not be started.")
 
-    monkeypatch.setattr("agent_runtime_platform.api.list_opencode_models", unavailable)
+    monkeypatch.setattr("agent_runtime_platform.api.app.list_opencode_models", unavailable)
     app = create_app(database_url="sqlite:///:memory:")
     with TestClient(app) as client:
         response = client.get("/opencode/models")

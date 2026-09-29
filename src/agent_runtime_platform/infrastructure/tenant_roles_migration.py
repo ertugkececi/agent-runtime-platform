@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
-from agent_runtime_platform.tenant_migration import (
+from agent_runtime_platform.infrastructure.tenant_migration import (
     REVISION as OWNERSHIP_REVISION,
     MigrationError,
     _backup,
@@ -57,7 +57,7 @@ def _require_v1(connection, issuer: str, subject: str, tenant_id: str) -> str:
 
 def _assert_legacy_guards(connection, tenant_id: str, owner_id: str) -> None:
     # Reuse the exact validator that gates legacy_owner resource authorization.
-    from agent_runtime_platform.resource_auth import ResourceAuthorization
+    from agent_runtime_platform.application.resource_auth import ResourceAuthorization
     ResourceAuthorization._validate_schema(connection, tenant_id, owner_id)
 
 

@@ -3,16 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 from agent_runtime_platform.features import is_enabled
-from agent_runtime_platform.providers._base import (
+from agent_runtime_platform.infrastructure.providers._base import (
     HandoffRequest,
     ModelOutput,
     ModelProvider,
     ProviderError,
 )
-from agent_runtime_platform.providers._manifest import manifest_exists
-from agent_runtime_platform.providers.codex.provider import CodexChatProvider
-from agent_runtime_platform.providers.openai.provider import OpenAIChatProvider
-from agent_runtime_platform.providers.opencode.provider import OpenCodeChatProvider
+from agent_runtime_platform.infrastructure.providers._manifest import manifest_exists
+from agent_runtime_platform.infrastructure.providers.codex.provider import CodexChatProvider
+from agent_runtime_platform.infrastructure.providers.openai.provider import OpenAIChatProvider
+from agent_runtime_platform.infrastructure.providers.opencode.provider import OpenCodeChatProvider
 
 
 class ProviderRegistry:

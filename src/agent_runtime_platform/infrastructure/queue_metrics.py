@@ -25,8 +25,8 @@ from typing import Any
 from dotenv import load_dotenv
 from sqlalchemy import select
 
-from agent_runtime_platform.database import Database
-from agent_runtime_platform.models import (
+from agent_runtime_platform.infrastructure.database import Database
+from agent_runtime_platform.domain.models import (
     HumanChatRun,
     HumanChatRunEvent,
     QueueJob,

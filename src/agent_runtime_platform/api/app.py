@@ -8,19 +8,19 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from agent_runtime_platform.database import Database
-from agent_runtime_platform.auth import AuthMiddleware, OIDCAuth, OIDCConfig, install_auth_routes
-from agent_runtime_platform.a2a import A2AError, configured_targets
-from agent_runtime_platform.providers import (
+from agent_runtime_platform.infrastructure.database import Database
+from agent_runtime_platform.infrastructure.auth import AuthMiddleware, OIDCAuth, OIDCConfig, install_auth_routes
+from agent_runtime_platform.infrastructure.a2a import A2AError, configured_targets
+from agent_runtime_platform.infrastructure.providers import (
     ProviderRegistry,
     list_codex_models,
     list_opencode_models,
     supports_tool_ids,
 )
-from agent_runtime_platform.mcp_tools import MCPConfigurationError, public_tool_catalog
-from agent_runtime_platform.rooms import RoomRuntimeService
-from agent_runtime_platform.resource_auth import ResourceAuthorization, OwnershipScope
-from agent_runtime_platform.runtime import (
+from agent_runtime_platform.infrastructure.mcp_tools import MCPConfigurationError, public_tool_catalog
+from agent_runtime_platform.application.rooms import RoomRuntimeService
+from agent_runtime_platform.application.resource_auth import ResourceAuthorization, OwnershipScope
+from agent_runtime_platform.application.runtime import (
     AgentDisabledError,
     AgentAmbiguousError,
     AgentCapabilityNotFoundError,
@@ -31,7 +31,7 @@ from agent_runtime_platform.runtime import (
     InvalidMessageError,
     RunExecutionFailed,
 )
-from agent_runtime_platform.schemas import (
+from agent_runtime_platform.api.schemas import (
     AgentConfigCatalog,
     AgentConfigProvider,
     AgentCreate,
@@ -92,7 +92,7 @@ def create_app(
 
     @app.get("/", include_in_schema=False)
     def chat_ui() -> FileResponse:
-        return FileResponse(Path(__file__).parent / "static" / "index.html")
+        return FileResponse(Path(__file__).resolve().parents[1] / "static" / "index.html")
 
     @app.get("/health")
     def health() -> dict[str, str]:

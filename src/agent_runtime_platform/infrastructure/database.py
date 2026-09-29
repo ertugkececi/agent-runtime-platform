@@ -7,7 +7,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from agent_runtime_platform.models import Base
+from agent_runtime_platform.domain.models import Base
 
 
 class Database:

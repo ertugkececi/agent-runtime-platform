@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from agent_runtime_platform.providers._base import HandoffRequest, ModelOutput, ProviderError
+from agent_runtime_platform.infrastructure.providers._base import HandoffRequest, ModelOutput, ProviderError
 
 
 class OpenAIChatProvider:

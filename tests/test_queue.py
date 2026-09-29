@@ -9,10 +9,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from agent_runtime_platform.api import create_app
-from agent_runtime_platform.models import Agent, HumanChatMessage, HumanChatRun, QueueJob, Task
-from agent_runtime_platform.providers import HandoffRequest, ProviderRegistry
-from agent_runtime_platform.runtime import _agent_snapshot
+from agent_runtime_platform.api.app import create_app
+from agent_runtime_platform.domain.models import Agent, HumanChatMessage, HumanChatRun, QueueJob, Task
+from agent_runtime_platform.infrastructure.providers import HandoffRequest, ProviderRegistry
+from agent_runtime_platform.application.runtime import _agent_snapshot
 from agent_runtime_platform.queue_worker import (
     WorkerAlreadyRunning, acquire_worker_lock, claim_one, recover_interrupted_jobs,
 )

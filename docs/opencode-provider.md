@@ -13,7 +13,7 @@ shortcut.
 ## How a call runs
 
 One model turn or one catalog read runs one short-lived TypeScript process
-(`src/agent_runtime_platform/providers/opencode/host/`). The Python adapter
+(`src/agent_runtime_platform/infrastructure/providers/opencode/host/`). The Python adapter
 (`providers/opencode/provider.py`) spawns it with `bun run start`, writes one
 JSON request on stdin, reads NDJSON records on stdout, and treats exit as the
 end of the call. There is no daemon and no state shared between calls.
@@ -43,7 +43,7 @@ end of the call. There is no daemon and no state shared between calls.
    the service:
 
    ```sh
-   cd src/agent_runtime_platform/providers/opencode/host
+   cd src/agent_runtime_platform/infrastructure/providers/opencode/host
    bun install --frozen-lockfile
    ```
 
@@ -126,7 +126,7 @@ Environment=PATH=/home/opc/.bun/bin:/home/opc/apps/agent-runtime-platform/.venv/
 
 The host package must be installed on the deployment host as the service user
 (`bun install --frozen-lockfile` in
-`src/agent_runtime_platform/providers/opencode/host`, as in step 2 above).
+`src/agent_runtime_platform/infrastructure/providers/opencode/host`, as in step 2 above).
 `.env` in the service working directory (`/home/opc/apps/agent-runtime-platform`)
 is loaded by the app, so the flag, the timeout and the provider credentials
 can live there; systemd `Environment=`/`EnvironmentFile=` works as well. On
@@ -152,7 +152,7 @@ Automatic tests never contact a live model service.
 
 - [`opencode-bridge-contract.md`](opencode-bridge-contract.md) — the
   stdin/stdout contract, record shapes, version window and isolation property.
-- [`../src/agent_runtime_platform/providers/opencode/host/README.md`](../src/agent_runtime_platform/providers/opencode/host/README.md)
+- [`../src/agent_runtime_platform/infrastructure/providers/opencode/host/README.md`](../src/agent_runtime_platform/infrastructure/providers/opencode/host/README.md)
   — the host package and its own checks.
 - `.env.example` — the two OpenCode environment variables.
 - Epic #67 and this delivery (#83); `docs/handover.md` records the decisions.

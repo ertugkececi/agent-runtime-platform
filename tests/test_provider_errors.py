@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-PROVIDERS = Path(__file__).resolve().parents[1] / "src" / "agent_runtime_platform" / "providers"
+PROVIDERS = Path(__file__).resolve().parents[1] / "src" / "agent_runtime_platform" / "infrastructure" / "providers"
 
 
 def _provider_modules() -> list[Path]:
