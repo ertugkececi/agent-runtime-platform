@@ -29,6 +29,29 @@ Before choosing a replacement, collect measurements over representative real use
 
 Set the service target and the observation window before interpreting these metrics. Scale only if representative measurements miss that target or a stated multi-host/high-availability requirement cannot be met by the current design. Compare candidate systems on delivery and retry semantics, persistence and recovery, deployment complexity, operational ownership, and total cost; select Redis Streams, NATS, or another option only after that comparison. Do not promote a single day's handful of jobs into a latency or capacity claim.
 
+## Measurement report
+
+`agent-runtime-queue-metrics` reads the persisted `queue_jobs` rows and the run
+event traces and prints the quantities above as JSON over an observation window
+(`--window-hours`, default 24; alongside the API and worker, from the same
+database configuration):
+
+    uv run --locked agent-runtime-queue-metrics --window-hours 168 > queue-metrics.json
+
+The report contains queue depth samples with oldest pending age, enqueue-to-start
+wait, processing and end-to-end duration percentiles, throughput and job mix,
+attempts, retries, recovery and resume waits, and model-call durations and error
+counts. It is read-only. It carries counts, statuses, timings, provider/phase
+names and coarse error categories only — never message content, prompts, tool
+arguments, provider configuration, credentials or error messages. Durations
+describe jobs that reached a terminal state inside the window; model-call
+durations describe calls started inside it. Each report states its window and
+sample counts, so no handful of jobs is promoted into a latency claim by itself.
+
 ## Next implementation step
 
-The next implementation slice is **Auth/principal** in the [security design](inbound-a2a-multiuser-security.md): OIDC server-side login/callback/logout, session handling, CSRF protection, and principal/scopes. The security design remains documentation until its implementation slices are delivered; this decision makes no runtime or schema changes.
+The measurement report above is the last piece of the security and assurance
+epic (**#69**). The auth/principal and offline tenant-migration slices have
+since landed default-off; their live OIDC, PostgreSQL and restore verification
+remain [release gates](release-gates.md). This decision still makes no runtime
+or schema changes.
