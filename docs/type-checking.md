@@ -62,16 +62,17 @@ The errors fell into four categories.
 | Missing narrowing | `runtime.py`, `rooms.py`, `auth.py`, `queue_worker.py`, `a2a.py` | Code fixes: explicit `None` guards, helper loaders, renamed reloaded rows |
 | Missing declaration | `api/app.py`, `runtime.py` | `resource_auth` / `room_runtime` are injected by `create_app`; they are now declared as optional class attributes instead of being attached dynamically |
 | Missing annotation | `_manifest.py`, `tenant_migration.py`, `queue_metrics.py` | Typed `_require` (bounded `TypeVar`), annotated counters/sets, annotated generic rows |
-| Checker limitation | `openai/provider.py`, `opencode/provider.py`, `queue_metrics.py` | One scoped ignore, optional-kwargs construction, explicit `Any` where SQLAlchemy cannot type a class selected through a variable |
+| Checker limitation | `opencode/provider.py`, `opencode/connections.py`, `queue_metrics.py` | One scoped ignore, optional-kwargs construction, explicit `Any` where SQLAlchemy cannot type a class selected through a variable |
 
 Notable concrete findings:
 
-- **`codex/provider.py` (113 of the 217 errors)** matched SDK thread items by
-  reading a `type` string with `getattr`. The items are a sealed union, so the
-  module now narrows with `isinstance(item, McpToolCallThreadItem)` /
-  `AgentMessageThreadItem` and compares `phase` against the `MessagePhase`
-  enum. The conditional kwargs for `thread.turn(...)` became two explicit
-  calls, which is also what the provider test asserts.
+- **The Codex provider (113 of the 217 errors; removed when OpenCode became
+  the only provider)** matched SDK thread items by reading a `type` string
+  with `getattr`. The items were a sealed union, so the module narrowed with
+  `isinstance(item, McpToolCallThreadItem)` / `AgentMessageThreadItem` and
+  compared `phase` against the `MessagePhase` enum. The conditional kwargs
+  for `thread.turn(...)` became two explicit calls, which the provider test
+  asserted. The same narrowing lesson applies to any typed SDK.
 - **`runtime.py`** assumed `session.get(...)` never returns `None` in a dozen
   places. The invariant is now stated once, in `_require_task` and
   `_require_chat_run`, which fail closed with a `RuntimeError` instead of an

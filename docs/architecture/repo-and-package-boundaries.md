@@ -16,13 +16,12 @@
 | --- | --- | --- |
 | Backend (API, runtime, worker, provider modules) | Repository | One deployable unit, one consumer group (API clients), one database |
 | Frontend (React console) | Repository | Deployed independently, different consumer (browser), independent cadence |
-| `codex` provider | Package (`infrastructure/providers/codex/`) | The official SDK is Python; no separate runtime is required |
 | `opencode` provider | Package (`infrastructure/providers/opencode/` plus `infrastructure/providers/opencode/host/`) | The official SDK is TypeScript; the host runs in its native stack |
 | `contracts/` | Directory in the backend repository | One consumer today; a separate repository needs two or more consumers and independent versioning |
 
 ## Why not one repository per host
 
-Splitting every provider host into its own repository (`agent-runtime-codex-host`, `agent-runtime-opencode-host`, `agent-runtime-claude-host`, and so on) would be internally consistent, but each of those repositories would have no independent consumer, no independent release cadence, and no independent deployment artifact. For a single-operator project this is pure overhead: more CI pipelines, more lockfiles, more cross-repository synchronization, and more places for a version skew to hide.
+Splitting the provider host into its own repository (`agent-runtime-opencode-host`) would be internally consistent, but that repository would have no independent consumer, no independent release cadence, and no independent deployment artifact. For a single-operator project this is pure overhead: more CI pipelines, more lockfiles, more cross-repository synchronization, and more places for a version skew to hide.
 
 The provider abstraction therefore lives **inside** the backend repository and is expressed through a uniform module shape rather than through repository count.
 
@@ -41,9 +40,9 @@ providers/
     host/          # optional: the provider's own runtime package
 ```
 
-`codex` and `openai` need no `host/` directory because their official SDKs are Python. `opencode` needs one because its official SDK is TypeScript. The shape is identical; only the presence of the optional package differs.
+`opencode` needs the optional `host/` directory because its official SDK is TypeScript. The shape stays uniform; only the presence of the optional package differs.
 
-Each provider uses its own official SDK in the stack that SDK targets. The manifest declares real differences instead of hiding them: a capability the provider does not support (for example `tool_ids`) is refused with an explicit `422`, not silently adapted.
+Each provider uses its own official SDK in the stack that SDK targets. The manifest declares real differences instead of hiding them: a capability the provider does not support is refused with an explicit `422`, not silently adapted.
 
 ## The mixed-language package
 
