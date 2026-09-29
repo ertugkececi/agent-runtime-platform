@@ -1,8 +1,8 @@
 # Handover
 
-Written 2026-09-28, updated 2026-09-29 so this work can continue from another
-machine without re-deriving context. The GitHub issues are the plan; this file
-only records things that are not yet written down anywhere else.
+Written 2026-09-28, closed out 2026-09-29 so this work can continue from
+another machine without re-deriving context. The GitHub issues were the plan;
+this file only records things that are not yet written down anywhere else.
 
 ## Where the work is tracked
 
@@ -11,12 +11,13 @@ only records things that are not yet written down anywhere else.
 | **#66** | Backend skeleton and contract foundation | **complete (7/7)** |
 | **#67** | OpenCode model provider | **complete (7/7)** |
 | **#68** | Frontend (React console) | **complete (8/8)** |
-| **#69** | Security and assurance | in progress — #92 delivered, #93 next |
+| **#69** | Security and assurance | **complete (4/4)** |
 
-Follow-ups found while working: **#103** (layered directories) and **#104**
-(mypy gate); **#98** (a2a poll deadline) is closed. **#38** and its draft pull
-request **#39** are both closed (decision 2026-09-29): the tenant-role work was
-re-implemented in **#92** and is on `main` default-off.
+Follow-ups found while working are complete and on `main`: **#103** (layered
+directories, `docs/architecture/layers.md`) and **#104** (mypy gate,
+`docs/type-checking.md`); **#98** (a2a poll deadline) is closed. **#38** and
+its draft pull request **#39** are both closed (decision 2026-09-29): the
+tenant-role work was re-implemented in **#92** and is on `main` default-off.
 
 ## What is on `main` now
 
@@ -47,28 +48,41 @@ re-implemented in **#92** and is on `main` default-off.
   `agent-runtime-tenant-role-migrate` command applies the `tenant_roles_v1`
   schema; startup never migrates and PostgreSQL is rejected fail-closed.
   `docs/tenant-roles.md` is the reference.
+- `docs/release-gates.md` is the single release-gate checklist (#93): live
+  tenant backfill and PostgreSQL verification, OIDC against a real provider,
+  restore from backup, and resource-authorization mapping. All four gates are
+  open; each closes only on recorded evidence and an approver's statement, and
+  the configuration it protects keeps its default-off value until then.
+- `agent-runtime-queue-metrics` prints the read-only queue and model-call
+  metrics report (#95) over a stated observation window;
+  `docs/queue-scaling-decision.md` records what it measures and that it never
+  carries content, prompts, credentials or error messages.
 
-## Next: Epic #69 — Security and assurance
+## What remains
 
-Epic #68 is delivered: the frontend is complete in the separate
-`agent-runtime-console` repository and no further frontend work is planned
-here. Epic #69 collects the security and assurance work; the sub-issues are
-worked in this order:
+The plan is delivered: epics **#66–#69** are complete, the follow-ups **#103**
+and **#104** have landed, and no open issue remains in this repository or in
+`agent-runtime-console`. New work starts as a new issue with acceptance
+criteria. Two standing gates can bring work back; both are in this repository:
 
-**#93 → #94 → #95**
-
-#92 delivered the tenant-role and published-agent policy from the closed
-#38/#39, default-off; OIDC/mapping plus PostgreSQL/restore verification remain
-open release gates, collected in #93.
+- **Release gates** ([release-gates.md](release-gates.md)): live tenant
+  backfill and PostgreSQL verification, OIDC against a real provider, restore
+  from backup, and resource-authorization mapping. Each gate names its
+  evidence and approver; until it closes, the configuration it protects keeps
+  its default-off value.
+- **Queue scaling** ([queue-scaling-decision.md](queue-scaling-decision.md)):
+  re-evaluated only when measured use misses an agreed service target or a
+  multi-host/availability requirement appears. Collect the measurements with
+  `agent-runtime-queue-metrics` before reconsidering the decision.
 
 ## Environment notes
 
 - The machine this work started on blocked `uv.exe` and `ruff.exe` through
   corporate application control, so `uv` never ran there. Python came from the
   MSI installer and dependencies from `pip install -e ".[dev]"`.
-- **`uv.lock` has still never been regenerated** — Epic #67 added no Python
-  dependency. Nothing in it is stale today. If you add one, run `uv lock` and
-  commit the result: CI installs with `uv sync --extra dev --locked`.
+- `uv.lock` was regenerated when the mypy dev dependency was added (#104). If
+  you add a dependency, run `uv lock` and commit the result: CI installs with
+  `uv sync --extra dev --locked`.
 - **`bun` is needed only for real OpenCode turns and catalog reads.** The
   Python tests run against `tests/fixtures/fake_opencode_host.py` and need no
   bun install; the host package's own suite is the separate `opencode-host` CI
