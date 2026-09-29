@@ -15,9 +15,9 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
-from agent_runtime_platform.api import create_app
-from agent_runtime_platform.providers import ProviderRegistry
-from agent_runtime_platform.models import AuthSession
+from agent_runtime_platform.api.app import create_app
+from agent_runtime_platform.infrastructure.providers import ProviderRegistry
+from agent_runtime_platform.domain.models import AuthSession
 
 
 def b64int(value: int) -> str:
@@ -272,7 +272,7 @@ def test_multi_audience_requires_and_accepts_matching_authorized_party(oidc_runt
 
 
 def test_pending_flow_expiry_cleanup_and_two_pending_starts(oidc_runtime):
-    from agent_runtime_platform.auth import LoginFlow
+    from agent_runtime_platform.infrastructure.auth import LoginFlow
 
     client, issuer = oidc_runtime
     auth = client.app.state.auth
@@ -285,7 +285,7 @@ def test_pending_flow_expiry_cleanup_and_two_pending_starts(oidc_runtime):
 
 
 def test_origin_formats_dns_ports_and_ipv6():
-    from agent_runtime_platform.auth import _origin
+    from agent_runtime_platform.infrastructure.auth import _origin
 
     assert _origin("https://app.example.test:8443/auth/callback") == "https://app.example.test:8443"
     assert _origin("https://[::1]:8443/auth/callback") == "https://[::1]:8443"
@@ -392,9 +392,9 @@ def test_client_id_only_change_keeps_current_session_until_logout(oidc_runtime):
 def _migrated_role_database(path, issuer_url, *, member_subject="another-person", duplicate=False):
     from uuid import uuid4
     from sqlalchemy import text
-    from agent_runtime_platform.database import Database
-    from agent_runtime_platform.tenant_migration import migrate as migrate_ownership
-    from agent_runtime_platform.tenant_roles_migration import migrate as migrate_roles
+    from agent_runtime_platform.infrastructure.database import Database
+    from agent_runtime_platform.infrastructure.tenant_migration import migrate as migrate_ownership
+    from agent_runtime_platform.infrastructure.tenant_roles_migration import migrate as migrate_roles
 
     url = f"sqlite:///{path}"
     db = Database(url)
@@ -402,7 +402,7 @@ def _migrated_role_database(path, issuer_url, *, member_subject="another-person"
     migrate_ownership(db.engine, migration_issuer, "legacy-operator", "legacy", path.with_suffix(".v1-backup.db"))
     migrate_roles(db.engine, migration_issuer, "legacy-operator", "legacy", path.with_suffix(".roles-backup.db"))
     import hashlib
-    from agent_runtime_platform.tenant_roles_migration import ROLE_REVISION
+    from agent_runtime_platform.infrastructure.tenant_roles_migration import ROLE_REVISION
     with db.engine.begin() as connection:
         # Simulate an HTTPS production issuer while the local OIDC fixture serves loopback HTTP.
         connection.execute(text("UPDATE tenant_owners SET oidc_issuer=:issuer"), {"issuer":issuer_url})
@@ -498,7 +498,7 @@ def test_tenant_role_login_rejects_unknown_and_ambiguous_memberships(tmp_path, m
 
 
 def test_tenant_roles_flag_fails_closed_without_oidc_and_invalid_modes(monkeypatch):
-    from agent_runtime_platform.auth import OIDCConfig
+    from agent_runtime_platform.infrastructure.auth import OIDCConfig
 
     monkeypatch.setenv("AGENT_RUNTIME_AUTH_MODE", "off")
     monkeypatch.setenv("AGENT_RUNTIME_RESOURCE_AUTH_MODE", "tenant_roles")
@@ -526,7 +526,7 @@ def test_tenant_roles_route_policy_and_transaction_owner_binding(tmp_path, monke
     monkeypatch.setenv("AGENT_RUNTIME_OIDC_LEGACY_SUB", "legacy-operator")
     app = create_app(database_url=db_url, providers=ProviderRegistry({"openai": FakeAuthProvider()}))
     try:
-        from agent_runtime_platform.resource_auth import OwnershipScope
+        from agent_runtime_platform.application.resource_auth import OwnershipScope
         with app.state.database.engine.connect() as connection:
             admin_id = connection.execute(text("SELECT id FROM tenant_memberships WHERE oidc_subject='legacy-operator'")).scalar_one()
         published = app.state.runtime.create_agent({"name":"shared published", "instructions":"fixture",
@@ -537,7 +537,7 @@ def test_tenant_roles_route_policy_and_transaction_owner_binding(tmp_path, monke
             "model_provider":"openai", "model_name":"fixture", "published":False}, OwnershipScope(admin_id,"legacy","admin"))["id"]
         with app.state.database.engine.begin() as connection:
             connection.execute(text("INSERT INTO tenant_memberships (id,tenant_id,oidc_issuer,oidc_subject,role,active,created_at) VALUES ('00000000-0000-0000-0000-000000000002','tenant-b',:issuer,'tenant-b-admin','admin',1,CURRENT_TIMESTAMP)"), {"issuer":issuer.url})
-        from agent_runtime_platform.resource_auth import OwnershipScope
+        from agent_runtime_platform.application.resource_auth import OwnershipScope
         scope_b = OwnershipScope("00000000-0000-0000-0000-000000000002","tenant-b","admin")
         b_agent_one = app.state.runtime.create_agent({"name":"tenant b one", "instructions":"fixture", "model_provider":"openai", "model_name":"fixture"}, scope_b)["id"]
         b_agent_two = app.state.runtime.create_agent({"name":"tenant b two", "instructions":"fixture", "model_provider":"openai", "model_name":"fixture"}, scope_b)["id"]
@@ -637,9 +637,9 @@ def test_tenant_roles_route_policy_and_transaction_owner_binding(tmp_path, monke
                 app.state.runtime.room_runtime._assert_worker_agent_access(session, room_id, published_two)
         with app.state.database.engine.begin() as connection:
             connection.execute(text("UPDATE agents SET published=1 WHERE id=:id"), {"id":published_two})
-        from agent_runtime_platform.models import AgentCapability, Task
-        from agent_runtime_platform.providers import HandoffRequest
-        import agent_runtime_platform.runtime as runtime_module
+        from agent_runtime_platform.domain.models import AgentCapability, Task
+        from agent_runtime_platform.infrastructure.providers import HandoffRequest
+        import agent_runtime_platform.application.runtime as runtime_module
         with app.state.database.session() as session:
             session.add_all([AgentCapability(agent_id=published_two, capability="tenant-handoff"),
                              AgentCapability(agent_id=b_agent_one, capability="tenant-handoff")])

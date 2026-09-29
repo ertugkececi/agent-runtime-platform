@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: src/agent_runtime_platform/providers/opencode/host
+        working-directory: src/agent_runtime_platform/infrastructure/providers/opencode/host
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

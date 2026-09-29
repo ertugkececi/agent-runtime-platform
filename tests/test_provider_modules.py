@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_runtime_platform.providers import (
+from agent_runtime_platform.infrastructure.providers import (
     CodexChatProvider,
     HandoffRequest,
     ModelOutput,
@@ -75,7 +75,7 @@ def test_injected_registry_replaces_the_defaults():
 def test_provider_sdks_are_still_imported_lazily():
     code = (
         "import sys;"
-        "import agent_runtime_platform.providers as p;"
+        "import agent_runtime_platform.infrastructure.providers as p;"
         "p.ProviderRegistry();"
         "print(int('openai_codex' in sys.modules), int('langchain_openai' in sys.modules))"
     )
@@ -131,9 +131,9 @@ def test_registry_rejects_an_invalid_handoff(handoff):
 
 
 def test_providers_live_in_one_directory_each():
-    package = SRC / "agent_runtime_platform" / "providers"
+    package = SRC / "agent_runtime_platform" / "infrastructure" / "providers"
     assert (package / "_base.py").is_file()
     assert (package / "_registry.py").is_file()
     assert (package / "codex" / "provider.py").is_file()
     assert (package / "openai" / "provider.py").is_file()
-    assert not (SRC / "agent_runtime_platform" / "providers.py").exists()
+    assert not (SRC / "agent_runtime_platform" / "infrastructure" / "providers.py").exists()

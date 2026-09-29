@@ -16,8 +16,8 @@
 | --- | --- | --- |
 | Backend (API, runtime, worker, provider modules) | Repository | One deployable unit, one consumer group (API clients), one database |
 | Frontend (React console) | Repository | Deployed independently, different consumer (browser), independent cadence |
-| `codex` provider | Package (`providers/codex/`) | The official SDK is Python; no separate runtime is required |
-| `opencode` provider | Package (`providers/opencode/` plus `providers/opencode/host/`) | The official SDK is TypeScript; the host runs in its native stack |
+| `codex` provider | Package (`infrastructure/providers/codex/`) | The official SDK is Python; no separate runtime is required |
+| `opencode` provider | Package (`infrastructure/providers/opencode/` plus `infrastructure/providers/opencode/host/`) | The official SDK is TypeScript; the host runs in its native stack |
 | `contracts/` | Directory in the backend repository | One consumer today; a separate repository needs two or more consumers and independent versioning |
 
 ## Why not one repository per host
@@ -28,7 +28,7 @@ The provider abstraction therefore lives **inside** the backend repository and i
 
 ## Uniform provider shape
 
-Every provider is one directory with the same shape:
+Every provider is one directory under `infrastructure/providers/` with the same shape:
 
 ```
 providers/
@@ -47,7 +47,7 @@ Each provider uses its own official SDK in the stack that SDK targets. The manif
 
 ## The mixed-language package
 
-`providers/opencode/host/` is a self-contained package inside the Python repository:
+`infrastructure/providers/opencode/host/` is a self-contained package inside the Python repository:
 
 - its own `package.json` and lockfile;
 - its own build and test commands;
@@ -67,5 +67,6 @@ Until then, the boundaries above stand.
 
 ## References
 
+- Backend layer directory rule: [layers.md](layers.md)
 - Agent registration, providers, and runtime behavior: [README](../README.md)
 - Queue scaling decision, which uses the same evidence-gated approach: [queue-scaling-decision.md](queue-scaling-decision.md)

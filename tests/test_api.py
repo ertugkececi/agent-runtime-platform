@@ -9,9 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from agent_runtime_platform.api import create_app
-from agent_runtime_platform.models import HumanChatRun, Run, Task
-from agent_runtime_platform.providers import (
+from agent_runtime_platform.api.app import create_app
+from agent_runtime_platform.domain.models import HumanChatRun, Run, Task
+from agent_runtime_platform.infrastructure.providers import (
     CodexChatProvider,
     HandoffRequest,
     OpenAIChatProvider,
@@ -811,7 +811,7 @@ def test_codex_provider_uses_existing_login_without_api_key_and_bounded_handoff(
 
     monkeypatch.setattr(openai_codex, "Codex", StubCodex)
     monkeypatch.setattr(
-        "agent_runtime_platform.codex_home.prepare_codex_home",
+        "agent_runtime_platform.infrastructure.codex_home.prepare_codex_home",
         lambda: Path("/tmp/test-codex-home"),
     )
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

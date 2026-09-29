@@ -28,7 +28,7 @@ If the acceptance criteria cannot be met as written, or the change needs a produ
 
 ## Providers
 
-Every provider is one directory under `src/agent_runtime_platform/providers/` with the same shape:
+Every provider is one directory under `src/agent_runtime_platform/infrastructure/providers/` with the same shape:
 
 - `provider.py` implements the contract in `_base.py`;
 - `manifest.toml` declares its capabilities (`id`, `runtime`, `sdk`, `supports_tool_ids`).

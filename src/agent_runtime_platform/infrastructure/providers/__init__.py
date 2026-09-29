@@ -10,22 +10,22 @@ support is declared in its manifest rather than implied by the shared interface.
 See ``docs/architecture/repo-and-package-boundaries.md``.
 """
 
-from agent_runtime_platform.providers._base import (
+from agent_runtime_platform.infrastructure.providers._base import (
     HandoffRequest,
     ModelOutput,
     ModelProvider,
     ProviderError,
 )
-from agent_runtime_platform.providers._manifest import (
+from agent_runtime_platform.infrastructure.providers._manifest import (
     ProviderManifest,
     load_manifest,
     manifest_exists,
     supports_tool_ids,
 )
-from agent_runtime_platform.providers._registry import ProviderRegistry
-from agent_runtime_platform.providers.codex.provider import CodexChatProvider, list_codex_models
-from agent_runtime_platform.providers.openai.provider import OpenAIChatProvider
-from agent_runtime_platform.providers.opencode.provider import list_opencode_models
+from agent_runtime_platform.infrastructure.providers._registry import ProviderRegistry
+from agent_runtime_platform.infrastructure.providers.codex.provider import CodexChatProvider, list_codex_models
+from agent_runtime_platform.infrastructure.providers.openai.provider import OpenAIChatProvider
+from agent_runtime_platform.infrastructure.providers.opencode.provider import list_opencode_models
 
 __all__ = [
     "CodexChatProvider",

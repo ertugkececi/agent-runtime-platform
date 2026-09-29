@@ -5,8 +5,8 @@ import json
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
-from agent_runtime_platform.a2a import A2AError, configured_targets
-from agent_runtime_platform.database import Database
+from agent_runtime_platform.infrastructure.a2a import A2AError, configured_targets
+from agent_runtime_platform.infrastructure.database import Database
 
 
 def test_existing_sqlite_tasks_table_gets_remote_delegation_columns(tmp_path):

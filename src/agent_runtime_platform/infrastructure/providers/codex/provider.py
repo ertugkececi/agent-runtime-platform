@@ -4,7 +4,7 @@ import json
 import tempfile
 from typing import Any
 
-from agent_runtime_platform.providers._base import HandoffRequest, ModelOutput, ProviderError
+from agent_runtime_platform.infrastructure.providers._base import HandoffRequest, ModelOutput, ProviderError
 
 
 def list_codex_models() -> list[dict[str, Any]]:
@@ -80,8 +80,8 @@ class CodexChatProvider:
             + json.dumps(history, ensure_ascii=False)
         )
         try:
-            from agent_runtime_platform.codex_home import prepare_codex_home
-            from agent_runtime_platform.mcp_tools import codex_mcp_overrides
+            from agent_runtime_platform.infrastructure.codex_home import prepare_codex_home
+            from agent_runtime_platform.infrastructure.mcp_tools import codex_mcp_overrides
 
             codex_home = prepare_codex_home()
             mcp_overrides = codex_mcp_overrides(tool_ids) if tool_ids else ()

@@ -20,7 +20,7 @@ re-implemented in **#92** and is on `main` default-off.
 
 ## What is on `main` now
 
-- Providers are one directory each under `src/agent_runtime_platform/providers/`,
+- Providers are one directory each under `src/agent_runtime_platform/infrastructure/providers/`,
   with declared capability manifests (#72, #73).
 - `features.py` is the single feature-flag registry, default-off (#71).
 - `contracts/openapi.json` is the generated HTTP contract, with a drift test (#70).

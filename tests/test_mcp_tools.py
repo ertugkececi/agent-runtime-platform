@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_runtime_platform.api import create_app
-from agent_runtime_platform.codex_home import prepare_codex_home
-from agent_runtime_platform.mcp_tools import codex_mcp_config
+from agent_runtime_platform.api.app import create_app
+from agent_runtime_platform.infrastructure.codex_home import prepare_codex_home
+from agent_runtime_platform.infrastructure.mcp_tools import codex_mcp_config
 
 
 FIXTURE_SERVER = Path(__file__).parent / "fixtures" / "readonly_mcp_server.py"
@@ -146,7 +146,7 @@ def test_codex_mcp_items_emit_metadata_only_tool_events(monkeypatch, tmp_path):
         TurnStatus,
     )
     from openai_codex.models import Notification
-    from agent_runtime_platform.providers import CodexChatProvider
+    from agent_runtime_platform.infrastructure.providers import CodexChatProvider
 
     fixture = Path(__file__).parent / "fixtures" / "readonly_mcp_server.py"
     monkeypatch.setenv(
@@ -159,7 +159,7 @@ def test_codex_mcp_items_emit_metadata_only_tool_events(monkeypatch, tmp_path):
             }
         }),
     )
-    monkeypatch.setattr("agent_runtime_platform.codex_home.prepare_codex_home", lambda: tmp_path)
+    monkeypatch.setattr("agent_runtime_platform.infrastructure.codex_home.prepare_codex_home", lambda: tmp_path)
     callbacks = []
     setup = {}
 

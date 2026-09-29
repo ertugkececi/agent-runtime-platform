@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
 
-from agent_runtime_platform.providers._base import HandoffRequest, ModelOutput, ProviderError
+from agent_runtime_platform.infrastructure.providers._base import HandoffRequest, ModelOutput, ProviderError
 
 BRIDGE_PROTOCOL = 1
 COMPATIBLE_MIN = 1

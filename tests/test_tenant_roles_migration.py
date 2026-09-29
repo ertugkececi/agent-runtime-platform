@@ -4,8 +4,8 @@ from sqlalchemy import inspect, text
 
 import pytest
 
-from agent_runtime_platform.tenant_migration import migrate as migrate_ownership
-from agent_runtime_platform.tenant_roles_migration import (
+from agent_runtime_platform.infrastructure.tenant_migration import migrate as migrate_ownership
+from agent_runtime_platform.infrastructure.tenant_roles_migration import (
     MigrationError,
     ROLE_REVISION,
     dry_run,
@@ -93,12 +93,12 @@ def test_role_migration_transaction_rolls_back_rebuild_failure(tmp_path):
     with db.engine.begin() as connection:
         connection.execute(text("CREATE TABLE __tenant_roles_v1_agents (payload TEXT)"))
         connection.execute(text("INSERT INTO __tenant_roles_v1_agents VALUES ('keep')"))
-    before = __import__("agent_runtime_platform.tenant_migration", fromlist=["snapshot"]).snapshot(db.engine)
+    before = __import__("agent_runtime_platform.infrastructure.tenant_migration", fromlist=["snapshot"]).snapshot(db.engine)
     backup = tmp_path / "roles-backup.db"
     with pytest.raises(MigrationError, match="Reserved table"):
         migrate(db.engine, ISSUER, SUBJECT, TENANT, backup)
     assert backup.exists()
-    assert __import__("agent_runtime_platform.tenant_migration", fromlist=["snapshot"]).snapshot(db.engine) == before
+    assert __import__("agent_runtime_platform.infrastructure.tenant_migration", fromlist=["snapshot"]).snapshot(db.engine) == before
     assert "tenant_memberships" not in inspect(db.engine).get_table_names()
     assert "published" not in {column["name"] for column in inspect(db.engine).get_columns("agents")}
     db.dispose()
@@ -109,12 +109,12 @@ def test_role_migration_rejects_schema_drift_before_backup(tmp_path):
     migrate_ownership(db.engine, ISSUER, SUBJECT, TENANT, tmp_path / "v1-backup.db")
     with db.engine.begin() as connection:
         connection.execute(text('DROP TRIGGER "trg_agents_legacy_owner_insert"'))
-    before = __import__("agent_runtime_platform.tenant_migration", fromlist=["snapshot"]).snapshot(db.engine)
+    before = __import__("agent_runtime_platform.infrastructure.tenant_migration", fromlist=["snapshot"]).snapshot(db.engine)
     backup = tmp_path / "should-not-exist.db"
     with pytest.raises(RuntimeError, match="write guards"):
         dry_run(db.engine, ISSUER, SUBJECT, TENANT)
     assert not backup.exists()
-    assert __import__("agent_runtime_platform.tenant_migration", fromlist=["snapshot"]).snapshot(db.engine) == before
+    assert __import__("agent_runtime_platform.infrastructure.tenant_migration", fromlist=["snapshot"]).snapshot(db.engine) == before
     db.dispose()
 
 
@@ -146,6 +146,6 @@ def test_role_validator_detects_index_drift_and_applied_dry_run_is_idempotent(tm
         "AGENT_RUNTIME_OIDC_LEGACY_TENANT": TENANT,
     }.items():
         monkeypatch.setenv(key, value)
-    from agent_runtime_platform.api import create_app
+    from agent_runtime_platform.api.app import create_app
     with pytest.raises(RuntimeError, match="invariants are incomplete or inconsistent"):
         create_app(f"sqlite:///{path}")

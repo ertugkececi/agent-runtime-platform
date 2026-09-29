@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from agent_runtime_platform.providers._base import ProviderError
+from agent_runtime_platform.infrastructure.providers._base import ProviderError
 
 MANIFEST_ROOT = Path(__file__).resolve().parent
 

@@ -10,7 +10,7 @@ from typing import Any
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from agent_runtime_platform.providers._manifest import supports_tool_ids
+from agent_runtime_platform.infrastructure.providers._manifest import supports_tool_ids
 
 _ID = re.compile(r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$")
 

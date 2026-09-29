@@ -7,8 +7,8 @@ import openai_codex
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from agent_runtime_platform.api import create_app
-from agent_runtime_platform.database import Database
+from agent_runtime_platform.api.app import create_app
+from agent_runtime_platform.infrastructure.database import Database
 
 
 def test_codex_model_catalog_exposes_supported_efforts(monkeypatch):

@@ -6,14 +6,14 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from agent_runtime_platform.database import Database
-from agent_runtime_platform.models import (
+from agent_runtime_platform.infrastructure.database import Database
+from agent_runtime_platform.domain.models import (
     Agent, QueueJob, Room, RoomParticipant, RoomRun, RoomRunEvent, RoomRunTurn,
     new_id,
 )
-from agent_runtime_platform.providers import HandoffRequest, ProviderError, ProviderRegistry
-from agent_runtime_platform.resource_auth import OwnershipScope, scoped_root, unique_run_parent
-from agent_runtime_platform.runtime import (
+from agent_runtime_platform.infrastructure.providers import HandoffRequest, ProviderError, ProviderRegistry
+from agent_runtime_platform.application.resource_auth import OwnershipScope, scoped_root, unique_run_parent
+from agent_runtime_platform.application.runtime import (
     AgentDisabledError, AgentNotFoundError, InvalidMessageError,
     _agent_snapshot, _public_snapshot,
 )

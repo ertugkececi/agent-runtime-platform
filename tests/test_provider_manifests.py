@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from agent_runtime_platform import providers
-from agent_runtime_platform.mcp_tools import validate_tool_ids
-from agent_runtime_platform.providers import (
+from agent_runtime_platform.infrastructure import providers
+from agent_runtime_platform.infrastructure.mcp_tools import validate_tool_ids
+from agent_runtime_platform.infrastructure.providers import (
     ProviderError,
     ProviderRegistry,
     load_manifest,
@@ -52,6 +52,7 @@ def test_opencode_declares_the_typescript_sdk():
             Path(__file__).resolve().parents[1]
             / "src"
             / "agent_runtime_platform"
+            / "infrastructure"
             / "providers"
             / "opencode"
             / "host"
@@ -75,7 +76,7 @@ def test_undeclared_provider_supports_no_tools():
 def test_manifests_are_read_without_importing_provider_sdks():
     code = (
         "import sys;"
-        "from agent_runtime_platform.providers import load_manifest;"
+        "from agent_runtime_platform.infrastructure.providers import load_manifest;"
         "m = load_manifest('codex');"
         "print(m.provider_id, int(m.supports_tool_ids),"
         " int('openai_codex' in sys.modules), int('langchain_openai' in sys.modules))"

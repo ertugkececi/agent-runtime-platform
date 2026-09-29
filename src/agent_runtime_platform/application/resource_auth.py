@@ -6,10 +6,10 @@ from dataclasses import dataclass
 
 from sqlalchemy import func, select, text
 
-from agent_runtime_platform.auth import OIDCConfig, Principal
-from agent_runtime_platform.database import Database
-from agent_runtime_platform.tenant_migration import REVISION, ROOT_TABLES, _validate_owned_roots
-from agent_runtime_platform.models import HumanChatRun, RoomRun, Run
+from agent_runtime_platform.infrastructure.auth import OIDCConfig, Principal
+from agent_runtime_platform.infrastructure.database import Database
+from agent_runtime_platform.infrastructure.tenant_migration import REVISION, ROOT_TABLES, _validate_owned_roots
+from agent_runtime_platform.domain.models import HumanChatRun, RoomRun, Run
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class ResourceAuthorization:
             if database.engine.dialect.name != "sqlite":
                 raise RuntimeError("tenant_roles is validated for SQLite only; PostgreSQL is fail-closed.")
             try:
-                from agent_runtime_platform.tenant_roles_migration import validate_role_migration
+                from agent_runtime_platform.infrastructure.tenant_roles_migration import validate_role_migration
                 validate_role_migration(database.engine, auth_config.issuer, auth_config.legacy_subject, auth_config.tenant_id)
             except Exception as exc:
                 raise RuntimeError("Tenant role migration invariants are incomplete or inconsistent.") from exc
@@ -75,7 +75,7 @@ class ResourceAuthorization:
                     "SELECT mapping_sha256 FROM tenant_migration_versions WHERE revision='tenant_roles_v1'"
                 )).scalar_one_or_none()
                 if role_digest is not None:
-                    from agent_runtime_platform.tenant_roles_migration import validate_role_migration
+                    from agent_runtime_platform.infrastructure.tenant_roles_migration import validate_role_migration
                     validate_role_migration(self.database.engine, issuer, subject, tenant_id)
                     membership = connection.execute(text("""
                         SELECT id FROM tenant_memberships

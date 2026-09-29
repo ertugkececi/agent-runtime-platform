@@ -7,14 +7,14 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
-import agent_runtime_platform.tenant_migration as migration
-from agent_runtime_platform.database import Database
-from agent_runtime_platform.models import (
+import agent_runtime_platform.infrastructure.tenant_migration as migration
+from agent_runtime_platform.infrastructure.database import Database
+from agent_runtime_platform.domain.models import (
     Agent, AgentCapability, Conversation, ConversationMember, HumanChatMessage,
     HumanChatRun, HumanChatRunEvent, HumanChatSession, Message, QueueJob, Room,
     RoomParticipant, RoomRun, RoomRunEvent, RoomRunTurn, Run, RunEvent, Task,
 )
-from agent_runtime_platform.tenant_migration import MigrationError, dry_run, migrate, snapshot
+from agent_runtime_platform.infrastructure.tenant_migration import MigrationError, dry_run, migrate, snapshot
 
 
 ISSUER = "https://login.example.test/"
